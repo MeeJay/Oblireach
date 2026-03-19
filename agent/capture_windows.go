@@ -4,7 +4,7 @@ package main
 
 /*
 #cgo CFLAGS: -DCOBJMACROS -DINITGUID
-#cgo LDFLAGS: -ld3d11 -ldxgi
+#cgo LDFLAGS: -ld3d11 -ldxgi -lgdi32
 
 #include <windows.h>
 #include <d3d11.h>
@@ -12,16 +12,34 @@ package main
 #include <stdlib.h>
 #include <string.h>
 
-static ID3D11Device          *g_device   = NULL;
-static ID3D11DeviceContext   *g_ctx      = NULL;
+// ── DXGI globals ──────────────────────────────────────────────────────────────
+static ID3D11Device           *g_device  = NULL;
+static ID3D11DeviceContext    *g_ctx     = NULL;
 static IDXGIOutputDuplication *g_dup     = NULL;
-static ID3D11Texture2D       *g_staging  = NULL;
-static int                    g_width    = 0;
-static int                    g_height   = 0;
+static ID3D11Texture2D        *g_staging = NULL;
 
-// capture_init: creates D3D11 device and acquires desktop duplication.
-// Returns 0 on success, negative error code on failure.
-static int capture_init(void) {
+// ── GDI globals (fallback for RDP / remote sessions) ─────────────────────────
+static int     g_use_gdi   = 0;
+static HDC     g_hdcScreen = NULL;
+static HDC     g_hdcMem    = NULL;
+static HBITMAP g_hBitmap   = NULL;
+static HBITMAP g_hOldBmp   = NULL;
+
+// ── Common ────────────────────────────────────────────────────────────────────
+static int g_width  = 0;
+static int g_height = 0;
+
+// ── DXGI helpers ──────────────────────────────────────────────────────────────
+
+static void dxgi_close(void) {
+    if (g_staging) { IUnknown_Release(g_staging); g_staging = NULL; }
+    if (g_dup)     { IUnknown_Release(g_dup);     g_dup     = NULL; }
+    if (g_ctx)     { IUnknown_Release(g_ctx);     g_ctx     = NULL; }
+    if (g_device)  { IUnknown_Release(g_device);  g_device  = NULL; }
+}
+
+// Returns 0 on success, negative on any failure (resources cleaned up).
+static int dxgi_init(void) {
     D3D_FEATURE_LEVEL fl;
     HRESULT hr = D3D11CreateDevice(
         NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
@@ -29,7 +47,6 @@ static int capture_init(void) {
         &g_device, &fl, &g_ctx
     );
     if (FAILED(hr)) {
-        // Fallback to WARP (software) renderer if no hardware
         hr = D3D11CreateDevice(
             NULL, D3D_DRIVER_TYPE_WARP, NULL,
             0, NULL, 0, D3D11_SDK_VERSION,
@@ -40,19 +57,18 @@ static int capture_init(void) {
 
     IDXGIDevice *dxgiDev = NULL;
     hr = ID3D11Device_QueryInterface(g_device, &IID_IDXGIDevice, (void**)&dxgiDev);
-    if (FAILED(hr)) return -2;
+    if (FAILED(hr)) { dxgi_close(); return -2; }
 
     IDXGIAdapter *adapter = NULL;
     hr = IDXGIDevice_GetAdapter(dxgiDev, &adapter);
     IUnknown_Release(dxgiDev);
-    if (FAILED(hr)) return -3;
+    if (FAILED(hr)) { dxgi_close(); return -3; }
 
     IDXGIOutput *output = NULL;
     hr = IDXGIAdapter_EnumOutputs(adapter, 0, &output);
     IUnknown_Release(adapter);
-    if (FAILED(hr)) return -4;
+    if (FAILED(hr)) { dxgi_close(); return -4; }
 
-    // Get desktop bounds from output
     DXGI_OUTPUT_DESC desc;
     IDXGIOutput_GetDesc(output, &desc);
     g_width  = desc.DesktopCoordinates.right  - desc.DesktopCoordinates.left;
@@ -61,36 +77,95 @@ static int capture_init(void) {
     IDXGIOutput1 *output1 = NULL;
     hr = IDXGIOutput_QueryInterface(output, &IID_IDXGIOutput1, (void**)&output1);
     IUnknown_Release(output);
-    if (FAILED(hr)) return -5;
+    if (FAILED(hr)) { dxgi_close(); return -5; }
 
+    // DuplicateOutput fails with DXGI_ERROR_UNSUPPORTED in RDP sessions —
+    // the caller will fall back to GDI capture in that case.
     hr = IDXGIOutput1_DuplicateOutput(output1, (IUnknown*)g_device, &g_dup);
     IUnknown_Release(output1);
-    if (FAILED(hr)) return -6;
+    if (FAILED(hr)) { dxgi_close(); g_width = 0; g_height = 0; return -6; }
 
     return 0;
 }
 
-// capture_get_size: fills *w and *h with the capture resolution.
+// ── GDI helpers ───────────────────────────────────────────────────────────────
+
+static void gdi_close(void) {
+    if (g_hOldBmp && g_hdcMem) SelectObject(g_hdcMem, g_hOldBmp);
+    if (g_hBitmap)   { DeleteObject(g_hBitmap);        g_hBitmap   = NULL; }
+    if (g_hdcMem)    { DeleteDC(g_hdcMem);             g_hdcMem    = NULL; }
+    if (g_hdcScreen) { ReleaseDC(NULL, g_hdcScreen);   g_hdcScreen = NULL; }
+    g_hOldBmp = NULL;
+    g_use_gdi = 0;
+}
+
+// Returns 0 on success, negative on failure.
+static int gdi_init(void) {
+    g_hdcScreen = GetDC(NULL);
+    if (!g_hdcScreen) return -10;
+
+    g_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    g_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (g_width <= 0 || g_height <= 0) {
+        ReleaseDC(NULL, g_hdcScreen);
+        g_hdcScreen = NULL;
+        return -11;
+    }
+
+    g_hdcMem = CreateCompatibleDC(g_hdcScreen);
+    if (!g_hdcMem) { gdi_close(); return -12; }
+
+    g_hBitmap = CreateCompatibleBitmap(g_hdcScreen, g_width, g_height);
+    if (!g_hBitmap) { gdi_close(); return -13; }
+
+    g_hOldBmp = (HBITMAP)SelectObject(g_hdcMem, g_hBitmap);
+    g_use_gdi = 1;
+    return 0;
+}
+
+// ── Public capture API ────────────────────────────────────────────────────────
+
+// capture_init: tries DXGI first; falls back to GDI for RDP/remote sessions.
+static int capture_init(void) {
+    if (dxgi_init() == 0) return 0;
+    // DXGI unavailable (e.g. RDP session) — use GDI BitBlt.
+    return gdi_init();
+}
+
 static void capture_get_size(int *w, int *h) {
     *w = g_width;
     *h = g_height;
 }
 
-// capture_frame: acquires the next desktop frame into out_bgra (pre-allocated: w*h*4 bytes).
-// Returns:
-//   0  = new frame captured
-//   1  = timeout (no new frame since last call)
-//  -1  = fatal error (caller should reinit)
+// capture_frame: fills out_bgra (pre-allocated w*h*4 bytes) with BGRA pixel data.
+// Returns:  0 = frame captured,  1 = no new frame (DXGI timeout),  -1 = fatal error.
+// GDI path always returns 0 (no "wait for new frame" concept).
 static int capture_frame(unsigned char *out_bgra) {
+    if (g_use_gdi) {
+        // GDI BitBlt — works in RDP sessions (CPU capture, no hardware acceleration)
+        if (!BitBlt(g_hdcMem, 0, 0, g_width, g_height, g_hdcScreen, 0, 0, SRCCOPY | CAPTUREBLT))
+            return -1;
+
+        BITMAPINFO bmi;
+        ZeroMemory(&bmi, sizeof(bmi));
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = g_width;
+        bmi.bmiHeader.biHeight      = -g_height; // negative = top-down (matches DXGI convention)
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;        // BGRX — alpha ignored by encoder
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        int lines = GetDIBits(g_hdcMem, g_hBitmap, 0, (UINT)g_height, out_bgra, &bmi, DIB_RGB_COLORS);
+        return (lines > 0) ? 0 : -1;
+    }
+
+    // ── DXGI path (original) ─────────────────────────────────────────────────
     DXGI_OUTDUPL_FRAME_INFO info;
     IDXGIResource *res = NULL;
 
     HRESULT hr = IDXGIOutputDuplication_AcquireNextFrame(g_dup, 33, &info, &res); // 33ms timeout
     if (hr == DXGI_ERROR_WAIT_TIMEOUT) return 1;
-    if (hr == DXGI_ERROR_ACCESS_LOST) {
-        // Monitor config changed — reinitialise required
-        return -1;
-    }
+    if (hr == DXGI_ERROR_ACCESS_LOST) return -1;
     if (FAILED(hr)) return -1;
 
     ID3D11Texture2D *tex = NULL;
@@ -101,7 +176,6 @@ static int capture_frame(unsigned char *out_bgra) {
         return -1;
     }
 
-    // (Re)create the CPU-readable staging texture on first call or after size change
     if (!g_staging) {
         D3D11_TEXTURE2D_DESC td;
         ID3D11Texture2D_GetDesc(tex, &td);
@@ -120,7 +194,6 @@ static int capture_frame(unsigned char *out_bgra) {
     hr = ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource*)g_staging, 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) return -1;
 
-    // Copy rows — RowPitch may be padded beyond width*4
     int row_bytes = g_width * 4;
     unsigned char *src = (unsigned char*)mapped.pData;
     for (int y = 0; y < g_height; y++) {
@@ -131,13 +204,15 @@ static int capture_frame(unsigned char *out_bgra) {
     return 0;
 }
 
-// capture_close: releases all DXGI/D3D11 resources.
+// capture_close: releases all resources (DXGI or GDI).
 static void capture_close(void) {
-    if (g_staging) { IUnknown_Release(g_staging); g_staging = NULL; }
-    if (g_dup)     { IUnknown_Release(g_dup);     g_dup     = NULL; }
-    if (g_ctx)     { IUnknown_Release(g_ctx);     g_ctx     = NULL; }
-    if (g_device)  { IUnknown_Release(g_device);  g_device  = NULL; }
-    g_width = 0; g_height = 0;
+    if (g_use_gdi) {
+        gdi_close();
+    } else {
+        dxgi_close();
+    }
+    g_width = 0;
+    g_height = 0;
 }
 */
 import "C"
@@ -151,7 +226,7 @@ var captureActive bool
 func captureInit() error {
 	ret := int(C.capture_init())
 	if ret < 0 {
-		return fmt.Errorf("DXGI capture init failed (code %d)", ret)
+		return fmt.Errorf("screen capture init failed (code %d)", ret)
 	}
 	captureActive = true
 	return nil
@@ -178,7 +253,7 @@ func captureHeight() int {
 
 // captureFrame fills buf (must be width*height*4 bytes) with BGRA pixel data.
 // Returns actual (width, height) and any error.
-// err == nil and width>0 means new frame captured.
+// err == nil and width>0 means a new frame was captured.
 func captureFrame(buf []byte) (width, height int, err error) {
 	var w, h C.int
 	C.capture_get_size(&w, &h)
@@ -192,14 +267,14 @@ func captureFrame(buf []byte) (width, height int, err error) {
 
 	ret := int(C.capture_frame((*C.uchar)(unsafe.Pointer(&buf[0]))))
 	if ret == 1 {
-		// timeout — no new frame
+		// DXGI timeout — no new frame since last call
 		return width, height, fmt.Errorf("no new frame")
 	}
 	if ret < 0 {
-		// Fatal — reinitialise DXGI
+		// Fatal — attempt reinitialise (DXGI access lost, or GDI error)
 		C.capture_close()
 		if rc := int(C.capture_init()); rc < 0 {
-			return 0, 0, fmt.Errorf("DXGI reinit failed (code %d)", rc)
+			return 0, 0, fmt.Errorf("capture reinit failed (code %d)", rc)
 		}
 		return width, height, fmt.Errorf("no new frame")
 	}
