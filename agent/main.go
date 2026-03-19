@@ -137,7 +137,7 @@ func main() {
 	log.Printf("Oblireach Agent v%s starting (uuid=%s server=%s)",
 		agentVersion, cfg.DeviceUUID, cfg.ServerURL)
 
-	runFn := func() { runPushLoop(cfg) }
+	runFn := func() { runCmdWS(cfg) }
 
 	// Try to run as a Windows service first; fall back to interactive mode.
 	if tryRunAsService(runFn) {
