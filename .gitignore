@@ -3,6 +3,12 @@ dist/
 !agent/dist/
 agent/dist/*.exe
 agent/dist/*.wixpdb
+agent/dist/oblireach-agent-darwin-*
+agent/dist/oblireach-agent-linux-*
+
+# Stray version-tag files (e.g. 1.0.3, v1.0.3)
+[0-9]*.[0-9]*.[0-9]*
+v[0-9]*.[0-9]*.[0-9]*
 desktop-app/dist/*.wixpdb
 agent/bin/*.exe
 agent/*.exe
