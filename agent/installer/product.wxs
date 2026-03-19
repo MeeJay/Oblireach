@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Oblireach Agent - Windows MSI Installer
+  Built with WiX v4+ on Windows.
+
+  Prerequisites (one-time setup):
+    dotnet tool install -g wix
+    go install (Go 1.22+, https://go.dev/dl)
+
+  Build (from agent/ directory):
+    build-msi.bat
+
+  Install command:
+    msiexec /i oblireach-agent.msi SERVERURL="https://..." APIKEY="your-key" /quiet
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Oblireach Agent"
+           Manufacturer="Oblireach"
+           Version="AGENT_VERSION_PLACEHOLDER"
+           Language="1033"
+           UpgradeCode="C6D7E8F9-A0B1-2345-CDEF-012345678902">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Oblireach Agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!--
+      Disable the Windows Restart Manager to prevent "FilesInUse" dialogs.
+      Service lifecycle is fully handled by ServiceControl and CustomAction elements.
+    -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <!-- Properties passed via: msiexec /i ... SERVERURL="..." APIKEY="..." -->
+    <Property Id="SERVERURL" Secure="yes" />
+    <Property Id="APIKEY" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ObliReachAgent">
+
+        <!--
+          The Go binary is a proper Windows service executable.
+          It uses tryRunAsService() which calls StartServiceCtrlDispatcher,
+          then falls back to interactive mode when not launched by SCM.
+          The --url and --key flags are passed as service arguments on first run;
+          the agent writes config.json and reads it directly on subsequent runs.
+        -->
+        <Component Id="AgentExe" Guid="D7E8F9A0-B1C2-3456-DEFA-012345670001">
+          <!--
+            DefaultVersion forces MSI to always overwrite the exe even when the binary on disk
+            has no Win32 version resource (Go binaries are unversioned by default).
+            65535.0.0.0 is always greater than any real version, so the source file always wins.
+          -->
+          <File Id="AgentExeFile" Source="dist\oblireach-agent.exe" Name="oblireach-agent.exe"
+                DefaultVersion="65535.0.0.0" />
+          <ServiceInstall Id="AgentSvc"
+                          Name="ObliReachAgent"
+                          DisplayName="Oblireach Remote Agent"
+                          Description="Provides remote desktop access and session management via the Oblireach platform."
+                          Start="auto"
+                          Type="ownProcess"
+                          Account="LocalSystem"
+                          ErrorControl="normal"
+                          Arguments='--url "[SERVERURL]" --key "[APIKEY]"' />
+          <ServiceControl Id="AgentSvcStart" Name="ObliReachAgent" Start="install" />
+          <ServiceControl Id="AgentSvcStop"  Name="ObliReachAgent" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+
+        <!--
+          Registry config: agent reads these on first run if config.json is absent.
+          Written to 64-bit hive via -arch x64 build flag.
+        -->
+        <Component Id="AgentConfig" Guid="E8F9A0B1-C2D3-4567-EFA0-012345670002">
+          <RegistryValue Root="HKLM" Key="SOFTWARE\ObliReachAgent"
+                         Name="ServerUrl" Type="string" Value="[SERVERURL]" KeyPath="yes" />
+          <RegistryValue Root="HKLM" Key="SOFTWARE\ObliReachAgent"
+                         Name="ApiKey"    Type="string" Value="[APIKEY]" />
+        </Component>
+
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="AgentConfig" />
+    </Feature>
+
+  </Package>
+</Wix>
