@@ -126,6 +126,15 @@ func handleCommand(cfg *Config, cmd *command) {
 			stopStream(token)
 		}
 
+	case "update":
+		urlStr, _ := cmd.Payload["url"].(string)
+		version, _ := cmd.Payload["version"].(string)
+		if urlStr != "" {
+			go performUpdate(cfg, cmd, urlStr, version)
+		} else {
+			log.Printf("Command %s: update: missing url in payload", cmd.ID)
+		}
+
 	default:
 		log.Printf("Command %s: unknown type %q", cmd.ID, cmd.Type)
 	}
