@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -36,8 +37,8 @@ func (s *StreamSession) stop() {
 	})
 }
 
-func startStream(cfg *Config, token string) error {
-	// Build WS URL
+// dialStreamWS opens the relay WebSocket for the given token.
+func dialStreamWS(cfg *Config, token string) (*wsConn, error) {
 	base := strings.TrimRight(cfg.ServerURL, "/")
 	var wsBase string
 	switch {
@@ -49,12 +50,27 @@ func startStream(cfg *Config, token string) error {
 		wsBase = base
 	}
 	wsURL := wsBase + "/api/remote/agent-tunnel/" + token
-
 	log.Printf("Stream %s: connecting to %s", token, wsURL)
+	return wsConnect(wsURL, http.Header{"X-Api-Key": []string{cfg.APIKey}})
+}
 
-	ws, err := wsConnect(wsURL, http.Header{
-		"X-Api-Key": []string{cfg.APIKey},
-	})
+// startStream opens a remote-control session.
+// sessionID < 0 means "use the console session".
+// On Windows, if the target session differs from this process's session,
+// a helper subprocess is spawned in that session.
+func startStream(cfg *Config, token string, sessionID int) error {
+	targetSession := sessionID
+	if targetSession < 0 {
+		targetSession = consoleSessionID()
+	}
+
+	// Cross-session on Windows: spawn capture helper.
+	if runtime.GOOS == "windows" && targetSession != currentSessionID() {
+		return startCrossSessionStream(cfg, token, targetSession)
+	}
+
+	// Direct capture path (same session or non-Windows).
+	ws, err := dialStreamWS(cfg, token)
 	if err != nil {
 		return fmt.Errorf("stream %s: WS connect failed: %w", token, err)
 	}
@@ -64,7 +80,6 @@ func startStream(cfg *Config, token string) error {
 		ws:     ws,
 		stopCh: make(chan struct{}),
 	}
-
 	activeStreams.Store(token, session)
 	go session.run()
 	return nil
@@ -225,8 +240,10 @@ func (s *StreamSession) run() {
 	}
 }
 
-// handleInput processes a JSON control frame from the browser.
-func (s *StreamSession) handleInput(payload []byte, screenW, screenH int) {
+// dispatchInputJSON parses and dispatches a browser input JSON frame.
+// Called both by the service process (direct capture) and by the helper
+// process (cross-session capture).
+func dispatchInputJSON(payload []byte, screenW, screenH int) {
 	var msg struct {
 		Type   string  `json:"type"`
 		Action string  `json:"action"`
@@ -270,6 +287,11 @@ func (s *StreamSession) handleInput(payload []byte, screenW, screenH int) {
 	case "resize_viewport":
 		// No action needed — we capture at native resolution
 	}
+}
+
+// handleInput is the StreamSession convenience wrapper for dispatchInputJSON.
+func (s *StreamSession) handleInput(payload []byte, screenW, screenH int) {
+	dispatchInputJSON(payload, screenW, screenH)
 }
 
 // codeToVK maps a browser KeyboardEvent.code string to a Windows VK_ code.

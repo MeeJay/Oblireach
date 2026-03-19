@@ -114,14 +114,34 @@ func setupConfig(urlArg, keyArg string) *Config {
 }
 
 func main() {
-	urlFlag := flag.String("url", "", "Obliance server URL (first run only)")
-	keyFlag := flag.String("key", "", "Oblireach API key (first run only)")
+	urlFlag         := flag.String("url", "", "Obliance server URL (first run only)")
+	keyFlag         := flag.String("key", "", "Oblireach API key (first run only)")
+	captureHelper   := flag.Bool("capture-helper", false, "Run as a capture helper subprocess (internal use)")
+	helperAddr      := flag.String("addr", "", "TCP address for capture helper to connect to")
 	flag.Parse()
 
+	// ── Capture helper subprocess mode ───────────────────────────────────────
+	// Launched by the service process inside a user session to perform DXGI capture.
+	if *captureHelper {
+		if *helperAddr == "" {
+			fmt.Fprintln(os.Stderr, "--addr required in capture-helper mode")
+			os.Exit(1)
+		}
+		runHelperMode(*helperAddr)
+		return
+	}
+
+	// ── Normal agent mode ─────────────────────────────────────────────────────
 	cfg := setupConfig(*urlFlag, *keyFlag)
 
 	log.Printf("Oblireach Agent v%s starting (uuid=%s server=%s)",
 		agentVersion, cfg.DeviceUUID, cfg.ServerURL)
 
-	runPushLoop(cfg)
+	runFn := func() { runPushLoop(cfg) }
+
+	// Try to run as a Windows service first; fall back to interactive mode.
+	if tryRunAsService(runFn) {
+		return
+	}
+	runFn()
 }

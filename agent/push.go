@@ -15,11 +15,12 @@ import (
 const pushInterval = 30 * time.Second
 
 type pushPayload struct {
-	DeviceUUID string `json:"deviceUuid"`
-	Hostname   string `json:"hostname"`
-	OS         string `json:"os"`
-	Arch       string `json:"arch"`
-	Version    string `json:"version"`
+	DeviceUUID string        `json:"deviceUuid"`
+	Hostname   string        `json:"hostname"`
+	OS         string        `json:"os"`
+	Arch       string        `json:"arch"`
+	Version    string        `json:"version"`
+	Sessions   []SessionInfo `json:"sessions,omitempty"`
 }
 
 type pushResponse struct {
@@ -53,6 +54,7 @@ func doPush(cfg *Config, client *http.Client) error {
 		OS:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
 		Version:    agentVersion,
+		Sessions:   enumerateSessions(),
 	}
 
 	body, err := json.Marshal(payload)
@@ -107,7 +109,14 @@ func handleCommand(cfg *Config, cmd *command) {
 			log.Printf("Command %s: missing sessionToken", cmd.ID)
 			return
 		}
-		if err := startStream(cfg, token); err != nil {
+		// Optional sessionId from payload; -1 = use console session default.
+		sessionID := -1
+		if raw, ok := cmd.Payload["sessionId"]; ok {
+			if f, ok := raw.(float64); ok {
+				sessionID = int(f)
+			}
+		}
+		if err := startStream(cfg, token, sessionID); err != nil {
 			log.Printf("Command %s: startStream failed: %v", cmd.ID, err)
 		}
 
