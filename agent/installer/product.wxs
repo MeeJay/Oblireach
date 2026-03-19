@@ -40,7 +40,7 @@
           The Go binary is a proper Windows service executable.
           It uses tryRunAsService() which calls StartServiceCtrlDispatcher,
           then falls back to interactive mode when not launched by SCM.
-          The --url and --key flags are passed as service arguments on first run;
+          The -url and -key flags are passed as service arguments on first run;
           the agent writes config.json and reads it directly on subsequent runs.
         -->
         <Component Id="AgentExe" Guid="D7E8F9A0-B1C2-3456-DEFA-012345670001">
