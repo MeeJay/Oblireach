@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	webview "github.com/webview/webview_go"
+	webview "github.com/jchv/go-webview2"
 )
 
 // appVersion is injected at build time via -ldflags "-X main.appVersion=x.y.z"

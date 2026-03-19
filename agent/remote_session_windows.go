@@ -181,6 +181,7 @@ func runHelperMode(addr string) {
 
 	// ── Send init message to service ─────────────────────────────────────────
 	initMsg := map[string]interface{}{
+		"type":   "init",
 		"width":  w,
 		"height": h,
 		"fps":    fps,
