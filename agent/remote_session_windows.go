@@ -10,6 +10,18 @@ package main
 #include <stdlib.h>
 #include <wchar.h>
 
+// enablePrivilege enables a named privilege in the given token.
+// Returns TRUE on success; FALSE if the privilege is not held at all.
+static BOOL enablePrivilege(HANDLE hToken, LPCWSTR privName) {
+	TOKEN_PRIVILEGES tp;
+	ZeroMemory(&tp, sizeof(tp));
+	tp.PrivilegeCount = 1;
+	tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+	if (!LookupPrivilegeValueW(NULL, privName, &tp.Privileges[0].Luid))
+		return FALSE;
+	return AdjustTokenPrivileges(hToken, FALSE, &tp, 0, NULL, NULL);
+}
+
 // spawnInSession launches cmdLine inside the given Windows session.
 // Uses WTSQueryUserToken for logged-in sessions; falls back to a
 // SYSTEM token with the session ID forced when no user is logged in.
@@ -17,6 +29,20 @@ package main
 // Returns 0 on success, negative GetLastError() on failure.
 static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 	HANDLE hToken = NULL;
+
+	// Enable SeTcbPrivilege on our own token before calling WTSQueryUserToken.
+	// Even though LocalSystem holds this privilege, it may not be enabled in
+	// the active token — AdjustTokenPrivileges is required to activate it.
+	{
+		HANDLE hSelf = NULL;
+		if (OpenProcessToken(GetCurrentProcess(),
+				TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hSelf)) {
+			enablePrivilege(hSelf, L"SeTcbPrivilege");
+			enablePrivilege(hSelf, L"SeAssignPrimaryTokenPrivilege");
+			enablePrivilege(hSelf, L"SeIncreaseQuotaPrivilege");
+			CloseHandle(hSelf);
+		}
+	}
 
 	if (!WTSQueryUserToken(sessionId, &hToken)) {
 		// No interactive user in this session — use SYSTEM token and relocate it.

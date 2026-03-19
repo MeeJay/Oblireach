@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ var agentVersion = "dev"
 var (
 	configDir  string
 	configFile string
+	logFilePath string
 )
 
 func init() {
@@ -32,7 +34,24 @@ func init() {
 	} else {
 		configDir = "/etc/oblireach-agent"
 	}
-	configFile = filepath.Join(configDir, "config.json")
+	configFile   = filepath.Join(configDir, "config.json")
+	logFilePath  = filepath.Join(configDir, "oblireach.log")
+}
+
+// setupLogging redirects log output to both stdout and a persistent log file.
+// The log file is created / appended to at configDir/oblireach.log.
+// If the file cannot be opened (e.g. permission issue) we silently fall back
+// to stdout-only so the process still starts.
+func setupLogging() {
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return // no directory — stdout only
+	}
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return // can't open — stdout only
+	}
+	log.SetOutput(io.MultiWriter(os.Stdout, f))
+	log.SetFlags(log.Ldate | log.Ltime)
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -114,6 +133,8 @@ func setupConfig(urlArg, keyArg string) *Config {
 }
 
 func main() {
+	setupLogging()
+
 	urlFlag         := flag.String("url", "", "Obliance server URL (first run only)")
 	keyFlag         := flag.String("key", "", "Oblireach API key (first run only)")
 	captureHelper   := flag.Bool("capture-helper", false, "Run as a capture helper subprocess (internal use)")

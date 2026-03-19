@@ -119,7 +119,12 @@ func enumerateSessions() []SessionInfo {
 		}
 		username := C.GoString(&s.username[0])
 		stationName := C.GoString(&s.stationName[0])
-		// Skip Session 0 (services) and anonymous non-active sessions
+		// Always skip Session 0 — it is the SCM/services session and has
+		// no user display; capturing it yields a black screen or WMF failure.
+		if s.sessionId == 0 {
+			continue
+		}
+		// Skip anonymous sessions that are not currently Active.
 		if username == "" && state != 0 {
 			continue
 		}
