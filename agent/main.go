@@ -50,7 +50,7 @@ func setupLogging() {
 	if err != nil {
 		return // can't open — stdout only
 	}
-	log.SetOutput(io.MultiWriter(os.Stdout, f))
+	log.SetOutput(io.MultiWriter(f, os.Stdout))
 	log.SetFlags(log.Ldate | log.Ltime)
 }
 
