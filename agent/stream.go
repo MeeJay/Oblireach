@@ -61,7 +61,7 @@ func dialStreamWS(cfg *Config, token string) (*wsConn, error) {
 func startStream(cfg *Config, token string, sessionID int) error {
 	targetSession := sessionID
 	if targetSession < 0 {
-		targetSession = consoleSessionID()
+		targetSession = findCaptureSession()
 	}
 
 	// Cross-session on Windows: spawn capture helper.

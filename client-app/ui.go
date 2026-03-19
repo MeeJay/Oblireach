@@ -491,9 +491,12 @@ function stopRemote() {
 
 async function handleRemoteMessage(event) {
   if (typeof event.data === 'string') {
-    // Init message: { width, height, fps, codec, extradata? }
+    // Control messages: { type, ... }
     try {
       const info = JSON.parse(event.data);
+      if (info.type === 'paired') return; // agent connected — stream starting
+      // Init message: { type:'init', width, height, fps, codec, extradata? }
+      if (!info.width || !info.height) return;
       await initDecoder(info);
       const statusEl = document.getElementById('remote-status');
       if (statusEl) statusEl.textContent = info.width + '×' + info.height + ' @ ' + info.fps + 'fps';
@@ -511,7 +514,7 @@ async function handleRemoteMessage(event) {
   const type = buf[0];
   const payload = buf.slice(1);
 
-  if (type === 0x01 && remoteDecoder) {
+  if (type === 0x02 && remoteDecoder) {
     // H.264 frame
     const chunk = new EncodedVideoChunk({
       type: 'delta',

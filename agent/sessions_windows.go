@@ -139,3 +139,27 @@ func consoleSessionID() int { return int(C.getConsoleSessionID()) }
 
 // currentSessionID returns this process's own session ID.
 func currentSessionID() int { return int(C.getMySessionID()) }
+
+// findCaptureSession returns the best WTS session ID to use for screen capture.
+//
+// On a physical machine the console session (returned by WTSGetActiveConsoleSessionId)
+// is what we want. On a headless VM or server that is only accessed via RDP,
+// WTSGetActiveConsoleSessionId returns 0xFFFFFFFF ("no active console session").
+// In that case we scan the WTS session list and return the first Active session
+// that has a logged-in user — i.e. the user's RDP session. If nothing is found
+// we fall back to the service's own session ID so the caller can decide what to do.
+func findCaptureSession() int {
+	consoleID := consoleSessionID()
+	// 0xFFFFFFFF (cast to int on 64-bit = 4294967295) means no active console session.
+	if uint32(consoleID) != 0xFFFFFFFF {
+		return consoleID
+	}
+	// No physical console — pick the first Active WTS session with a logged-in user.
+	for _, s := range enumerateSessions() {
+		if s.State == "Active" && s.Username != "" {
+			return s.ID
+		}
+	}
+	// Fallback: our own session (service session 0 — direct capture in Session 0).
+	return currentSessionID()
+}

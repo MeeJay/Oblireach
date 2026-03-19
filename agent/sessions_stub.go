@@ -14,3 +14,4 @@ type SessionInfo struct {
 func enumerateSessions() []SessionInfo { return nil }
 func consoleSessionID() int            { return 0 }
 func currentSessionID() int            { return 0 }
+func findCaptureSession() int          { return 0 }
