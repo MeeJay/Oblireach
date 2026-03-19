@@ -276,16 +276,9 @@ function renderTree() {
       row.className = 'device-row' + (selectedDevice?.id === dev.id ? ' active' : '');
       row.dataset.id = dev.id;
 
-      const dotClass = dev.oblireach.online ? 'online' : dev.oblireach.installed ? 'warn' : 'offline';
+      const dotClass = dev.oblireach.online ? 'online' : 'warn';
       row.innerHTML = '<span class="dot ' + dotClass + '"></span>' +
         '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(dev.hostname) + '</span>';
-
-      if (!dev.oblireach.installed) {
-        const badge = document.createElement('span');
-        badge.style.cssText = 'font-size:9px;color:var(--muted);flex-shrink:0';
-        badge.textContent = 'No agent';
-        row.appendChild(badge);
-      }
 
       row.addEventListener('click', () => selectDevice(dev));
       tree.appendChild(row);
@@ -458,13 +451,13 @@ async function startRemote(wtsSessionId) {
     const r = await api('POST', '/api/remote/sessions', body);
     const d = await r.json();
     const session = d.data;
-    if (!session?.token) throw new Error('No session token in response');
+    if (!session?.sessionToken) throw new Error('No session token in response');
 
     if (statusEl) statusEl.textContent = 'Connecting…';
 
     // Connect WebSocket to remote tunnel (via proxy).
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = proto + '//' + location.host + '/proxy/api/remote/tunnel/' + session.token;
+    const wsUrl = proto + '//' + location.host + '/proxy/api/remote/tunnel/' + session.sessionToken;
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
