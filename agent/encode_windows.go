@@ -15,13 +15,6 @@ package main
 #include <stdlib.h>
 #include <string.h>
 
-// Software H.264 encoder MFT CLSID
-// {a7e2c842-2f83-4d5a-adbd-ca3855e2f824}
-static const GUID CLSID_H264Encoder = {
-    0xa7e2c842, 0x2f83, 0x4d5a,
-    {0xad, 0xbd, 0xca, 0x38, 0x55, 0xe2, 0xf8, 0x24}
-};
-
 static IMFTransform *g_encoder   = NULL;
 static int           g_enc_w     = 0;
 static int           g_enc_h     = 0;
@@ -34,21 +27,20 @@ static void bgra_to_nv12(
     unsigned char *y_plane, unsigned char *uv_plane)
 {
     int stride = w * 4;
-    // Y plane
-    for (int row = 0; row < h; row++) {
+    int row, col;
+    for (row = 0; row < h; row++) {
         const unsigned char *src = bgra + row * stride;
         unsigned char *ydst = y_plane + row * w;
-        for (int col = 0; col < w; col++, src += 4) {
+        for (col = 0; col < w; col++, src += 4) {
             int b = src[0], g = src[1], r = src[2];
             ydst[col] = (unsigned char)(((77*r + 150*g + 29*b + 128) >> 8) + 16);
         }
     }
-    // UV plane (interleaved Cb,Cr — 2x downsampled)
-    for (int row = 0; row < h/2; row++) {
+    for (row = 0; row < h/2; row++) {
         const unsigned char *s0 = bgra + (row*2)   * stride;
         const unsigned char *s1 = bgra + (row*2+1) * stride;
         unsigned char *uvdst = uv_plane + row * w;
-        for (int col = 0; col < w/2; col++) {
+        for (col = 0; col < w/2; col++) {
             int b = ((int)s0[col*2*4+0] + s0[(col*2+1)*4+0] +
                           s1[col*2*4+0] + s1[(col*2+1)*4+0]) >> 2;
             int g = ((int)s0[col*2*4+1] + s0[(col*2+1)*4+1] +
@@ -68,57 +60,75 @@ static int encoder_init(
     int w, int h, int fps, int bitrate,
     unsigned char *extradata_out, int *extradata_size)
 {
-    *extradata_size = 0;
+    // H.264 encoder CLSIDs tried in order:
+    //   [0] CLSID_MSH264EncoderMFT {6ca50344-...} - pure software, works in all sessions.
+    //   [1] {a7e2c842-...}                         - hardware-assisted fallback.
+    static const GUID h264Clsids[2] = {
+        { 0x6ca50344, 0x051a, 0x4ded, {0x97, 0x79, 0xa4, 0x33, 0x05, 0x16, 0x5e, 0x35} },
+        { 0xa7e2c842, 0x2f83, 0x4d5a, {0xad, 0xbd, 0xca, 0x38, 0x55, 0xe2, 0xf8, 0x24} }
+    };
+
     HRESULT hr;
+    IMFMediaType *outType = NULL;
+    IMFMediaType *inType = NULL;
+    IMFMediaType *curOutType = NULL;
+    int n;
+
+    *extradata_size = 0;
+
+    // COM must be initialised before MFStartup.
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    // S_FALSE = already initialised — fine to continue.
 
     hr = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
     if (FAILED(hr)) return -1;
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    // E_ALREADY_INIT is fine
-
-    hr = CoCreateInstance(
-        &CLSID_H264Encoder, NULL, CLSCTX_INPROC_SERVER,
-        &IID_IMFTransform, (void**)&g_encoder);
+    // Try each CLSID; use the first one that creates successfully.
+    hr = E_FAIL;
+    for (n = 0; n < 2; n++) {
+        hr = CoCreateInstance(
+            &h264Clsids[n], NULL, CLSCTX_INPROC_SERVER,
+            &IID_IMFTransform, (void**)&g_encoder);
+        if (SUCCEEDED(hr)) break;
+    }
     if (FAILED(hr)) return -2;
 
-    // ── Output type: H.264 ────────────────────────────────────────────────────
-    IMFMediaType *outType = NULL;
+    // Output type: H.264
     MFCreateMediaType(&outType);
     IMFMediaType_SetGUID(outType, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
     IMFMediaType_SetGUID(outType, &MF_MT_SUBTYPE, &MFVideoFormat_H264);
     IMFMediaType_SetUINT32(outType, &MF_MT_AVG_BITRATE, (UINT32)bitrate);
     IMFMediaType_SetUINT32(outType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    // MFSetAttributeSize/Ratio are C++ inline helpers — use SetUINT64 directly (same packing)
-    IMFMediaType_SetUINT64(outType, &MF_MT_FRAME_SIZE, ((UINT64)(UINT32)w << 32) | (UINT64)(UINT32)h);
-    IMFMediaType_SetUINT64(outType, &MF_MT_FRAME_RATE, ((UINT64)(UINT32)fps << 32) | 1ULL);
+    IMFMediaType_SetUINT64(outType, &MF_MT_FRAME_SIZE,
+        ((UINT64)(UINT32)w << 32) | (UINT64)(UINT32)h);
+    IMFMediaType_SetUINT64(outType, &MF_MT_FRAME_RATE,
+        ((UINT64)(UINT32)fps << 32) | 1ULL);
     IMFMediaType_SetUINT64(outType, &MF_MT_PIXEL_ASPECT_RATIO, (1ULL << 32) | 1ULL);
 
     hr = IMFTransform_SetOutputType(g_encoder, 0, outType, 0);
     IMFMediaType_Release(outType);
     if (FAILED(hr)) { IUnknown_Release(g_encoder); g_encoder = NULL; return -3; }
 
-    // ── Input type: NV12 ──────────────────────────────────────────────────────
-    IMFMediaType *inType = NULL;
+    // Input type: NV12
     MFCreateMediaType(&inType);
     IMFMediaType_SetGUID(inType, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
     IMFMediaType_SetGUID(inType, &MF_MT_SUBTYPE, &MFVideoFormat_NV12);
     IMFMediaType_SetUINT32(inType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    IMFMediaType_SetUINT64(inType, &MF_MT_FRAME_SIZE, ((UINT64)(UINT32)w << 32) | (UINT64)(UINT32)h);
-    IMFMediaType_SetUINT64(inType, &MF_MT_FRAME_RATE, ((UINT64)(UINT32)fps << 32) | 1ULL);
+    IMFMediaType_SetUINT64(inType, &MF_MT_FRAME_SIZE,
+        ((UINT64)(UINT32)w << 32) | (UINT64)(UINT32)h);
+    IMFMediaType_SetUINT64(inType, &MF_MT_FRAME_RATE,
+        ((UINT64)(UINT32)fps << 32) | 1ULL);
     IMFMediaType_SetUINT64(inType, &MF_MT_PIXEL_ASPECT_RATIO, (1ULL << 32) | 1ULL);
 
     hr = IMFTransform_SetInputType(g_encoder, 0, inType, 0);
     IMFMediaType_Release(inType);
     if (FAILED(hr)) { IUnknown_Release(g_encoder); g_encoder = NULL; return -4; }
 
-    // ── Start streaming ───────────────────────────────────────────────────────
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_COMMAND_FLUSH, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
-    // ── Extract SPS/PPS (codec private data) ─────────────────────────────────
-    IMFMediaType *curOutType = NULL;
+    // Extract SPS/PPS (codec private data)
     if (SUCCEEDED(IMFTransform_GetOutputCurrentType(g_encoder, 0, &curOutType))) {
         UINT8 *seqHdr = NULL;
         UINT32 seqLen = 0;
@@ -148,50 +158,58 @@ static int encode_frame(
     long long pts_100ns,
     unsigned char *out_buf, int out_cap)
 {
+    int nv12_size;
+    unsigned char *nv12;
+    IMFMediaBuffer *inBuf;
+    BYTE *dst;
+    IMFSample *inSample;
+    HRESULT hr;
+    int total;
+
     if (!g_encoder) return -1;
 
-    // ── Convert BGRA → NV12 ──────────────────────────────────────────────────
-    int nv12_size = w * h + (w * h / 2);
-    unsigned char *nv12 = (unsigned char*)malloc(nv12_size);
+    nv12_size = w * h + (w * h / 2);
+    nv12 = (unsigned char*)malloc(nv12_size);
     if (!nv12) return -1;
     bgra_to_nv12(bgra, w, h, nv12, nv12 + w * h);
 
-    // ── Wrap in MF sample ─────────────────────────────────────────────────────
-    IMFMediaBuffer *inBuf = NULL;
-    HRESULT hr = MFCreateMemoryBuffer((DWORD)nv12_size, &inBuf);
+    inBuf = NULL;
+    hr = MFCreateMemoryBuffer((DWORD)nv12_size, &inBuf);
     if (FAILED(hr)) { free(nv12); return -1; }
 
-    BYTE *dst = NULL;
+    dst = NULL;
     IMFMediaBuffer_Lock(inBuf, &dst, NULL, NULL);
     memcpy(dst, nv12, nv12_size);
     IMFMediaBuffer_Unlock(inBuf);
     IMFMediaBuffer_SetCurrentLength(inBuf, (DWORD)nv12_size);
     free(nv12);
 
-    IMFSample *inSample = NULL;
+    inSample = NULL;
     MFCreateSample(&inSample);
     IMFSample_AddBuffer(inSample, inBuf);
     IMFSample_SetSampleTime(inSample, (LONGLONG)pts_100ns);
-    IMFSample_SetSampleDuration(inSample,
-        (LONGLONG)(10000000 / g_fps)); // 100ns units
+    IMFSample_SetSampleDuration(inSample, (LONGLONG)(10000000 / g_fps));
     IMFMediaBuffer_Release(inBuf);
 
     hr = IMFTransform_ProcessInput(g_encoder, 0, inSample, 0);
     IMFSample_Release(inSample);
     if (FAILED(hr) && hr != MF_E_NOTACCEPTING) return -1;
 
-    // ── Drain output ──────────────────────────────────────────────────────────
-    int total = 0;
+    total = 0;
     for (;;) {
         IMFSample *outSample = NULL;
-        MFCreateSample(&outSample);
         IMFMediaBuffer *outBuf = NULL;
+        MFT_OUTPUT_DATA_BUFFER outData;
+        DWORD status = 0;
+        DWORD bufCount = 0;
+        DWORD i;
+
+        MFCreateSample(&outSample);
         MFCreateMemoryBuffer(2*1024*1024, &outBuf);
         IMFSample_AddBuffer(outSample, outBuf);
 
-        MFT_OUTPUT_DATA_BUFFER outData = {0};
+        memset(&outData, 0, sizeof(outData));
         outData.pSample = outSample;
-        DWORD status = 0;
 
         hr = IMFTransform_ProcessOutput(g_encoder, 0, 1, &outData, &status);
 
@@ -206,13 +224,12 @@ static int encode_frame(
             break;
         }
 
-        // Collect all buffers from the output sample
-        DWORD bufCount = 0;
         IMFSample_GetBufferCount(outData.pSample, &bufCount);
-        for (DWORD i = 0; i < bufCount; i++) {
+        for (i = 0; i < bufCount; i++) {
             IMFMediaBuffer *b = NULL;
+            BYTE *data = NULL;
+            DWORD len = 0;
             IMFSample_GetBufferByIndex(outData.pSample, i, &b);
-            BYTE *data = NULL; DWORD len = 0;
             IMFMediaBuffer_Lock(b, &data, NULL, &len);
             if (total + (int)len <= out_cap) {
                 memcpy(out_buf + total, data, len);
@@ -268,7 +285,6 @@ func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) 
 	encoderInitDone = true
 
 	if int(extSize) > 0 {
-		// Return as base64 string (JSON-friendly for the init message)
 		raw := extBuf[:int(extSize)]
 		b64 := base64.StdEncoding.EncodeToString(raw)
 		return []byte(b64), nil
