@@ -114,6 +114,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 	"unsafe"
@@ -167,6 +168,16 @@ func pipeRecv(r io.Reader) (msgType byte, payload []byte, err error) {
 // It connects to addr (TCP), initialises DXGI capture + WMF encoder in its
 // own session, then streams frames to the service process and handles input.
 func runHelperMode(addr string) {
+	// The helper runs as the interactive user — C:\ProgramData is not writable
+	// by standard users, so setupLogging() falls back to stdout (discarded for
+	// a no-window process).  Redirect to %TEMP% so crash messages are visible.
+	if tmpDir := os.TempDir(); tmpDir != "" {
+		if f, err := os.OpenFile(
+			filepath.Join(tmpDir, "oblireach-helper.log"),
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			log.SetOutput(io.MultiWriter(f, os.Stdout))
+		}
+	}
 	log.Printf("helper: connecting to service at %s", addr)
 
 	var conn net.Conn
