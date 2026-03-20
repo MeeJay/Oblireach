@@ -71,7 +71,6 @@ static int encoder_init(
     HRESULT hr;
     IMFMediaType *outType = NULL;
     IMFMediaType *inType = NULL;
-    IMFMediaType *curOutType = NULL;
     int n;
 
     *extradata_size = 0;
@@ -128,20 +127,10 @@ static int encoder_init(
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
-    // Extract SPS/PPS (codec private data)
-    if (SUCCEEDED(IMFTransform_GetOutputCurrentType(g_encoder, 0, &curOutType))) {
-        UINT8 *seqHdr = NULL;
-        UINT32 seqLen = 0;
-        if (SUCCEEDED(IMFMediaType_GetAllocatedBlob(curOutType,
-                &MF_MT_MPEG_SEQUENCE_HEADER, &seqHdr, &seqLen))
-            && seqLen > 0 && seqLen < 256)
-        {
-            memcpy(extradata_out, seqHdr, seqLen);
-            *extradata_size = (int)seqLen;
-            CoTaskMemFree(seqHdr);
-        }
-        IMFMediaType_Release(curOutType);
-    }
+    // SPS/PPS are embedded inline in the first IDR output sample (Annex B format).
+    // Do not use MF_MT_MPEG_SEQUENCE_HEADER as extradata: it is Annex B, not AVCC,
+    // and would corrupt the WebCodecs VideoDecoder description field.
+    // extradata_size remains 0; the browser decoder handles in-band SPS/PPS.
 
     g_enc_w   = w;
     g_enc_h   = h;
@@ -258,7 +247,6 @@ static void encoder_close(void) {
 */
 import "C"
 import (
-	"encoding/base64"
 	"fmt"
 	"unsafe"
 )
@@ -283,12 +271,7 @@ func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) 
 		return nil, fmt.Errorf("WMF encoder init failed (code %d)", ret)
 	}
 	encoderInitDone = true
-
-	if int(extSize) > 0 {
-		raw := extBuf[:int(extSize)]
-		b64 := base64.StdEncoding.EncodeToString(raw)
-		return []byte(b64), nil
-	}
+	// extSize is always 0: SPS/PPS are embedded inline in the H.264 bitstream.
 	return nil, nil
 }
 
