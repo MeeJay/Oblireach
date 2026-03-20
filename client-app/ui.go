@@ -335,6 +335,7 @@ function selectDevice(dev) {
   const dotTitle = dev.oblireach.online ? 'Oblireach online' : dev.oblireach.installed ? 'Oblireach offline' : 'Oblireach not installed';
   hdr.innerHTML = '<span class="dot ' + dotClass + '" title="' + dotTitle + '" style="width:9px;height:9px"></span>' +
     '<h2>' + esc(dev.hostname) + '</h2>' +
+    (dev.oblireach.updateAvailable ? '<span style="font-size:10px;color:var(--warn);font-weight:600;background:var(--warn)/15;padding:2px 6px;border-radius:4px">UPDATE</span>' : '') +
     '<span style="font-size:11px;color:var(--muted)">' + esc(dev.osType) + ' · ' + esc(dev.status) + '</span>';
   area.appendChild(hdr);
 
@@ -539,15 +540,33 @@ async function handleRemoteMessage(event) {
     createImageBitmap(blob).then(bmp => {
       const canvas = document.getElementById('remote-canvas');
       if (!canvas) return;
-      if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
-        canvas.width = bmp.width;
-        canvas.height = bmp.height;
+      // Store agent dimensions for input coordinate mapping
+      if (!canvas._agentW || canvas._agentW !== bmp.width || canvas._agentH !== bmp.height) {
+        canvas._agentW = bmp.width;
+        canvas._agentH = bmp.height;
+      }
+      // Size the canvas to its CSS layout size (viewport) and draw scaled
+      const rect = canvas.getBoundingClientRect();
+      const cw = Math.round(rect.width * (window.devicePixelRatio || 1));
+      const ch = Math.round(rect.height * (window.devicePixelRatio || 1));
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
       }
       canvas.style.display = 'block';
       const ph = document.getElementById('remote-placeholder');
       if (ph) ph.style.display = 'none';
       const ctx = canvas.getContext('2d');
-      if (ctx) ctx.drawImage(bmp, 0, 0);
+      if (ctx) {
+        // Fit the image while preserving aspect ratio
+        const scale = Math.min(cw / bmp.width, ch / bmp.height);
+        const dw = Math.round(bmp.width * scale);
+        const dh = Math.round(bmp.height * scale);
+        const dx = Math.round((cw - dw) / 2);
+        const dy = Math.round((ch - dh) / 2);
+        ctx.clearRect(0, 0, cw, ch);
+        ctx.drawImage(bmp, dx, dy, dw, dh);
+      }
       bmp.close();
     }).catch(() => {});
   } else if (type === 0x02 && remoteDecoder) {
@@ -597,9 +616,21 @@ async function initDecoder(info) {
 function sendInput(type, e, canvas) {
   if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const msg = { type, x: Math.round((e.clientX - rect.left) * scaleX), y: Math.round((e.clientY - rect.top) * scaleY) };
+  // Use agent dimensions if available (JPEG path), otherwise use canvas internal size
+  const aw = canvas._agentW || canvas.width;
+  const ah = canvas._agentH || canvas.height;
+  // Compute the scaled image rect within the canvas (accounting for aspect-ratio fit)
+  const dpr = window.devicePixelRatio || 1;
+  const cw = rect.width * dpr;
+  const ch = rect.height * dpr;
+  const scale = Math.min(cw / aw, ch / ah);
+  const dw = aw * scale;
+  const dh = ah * scale;
+  const dx = (cw - dw) / 2;
+  const dy = (ch - dh) / 2;
+  const px = (e.clientX - rect.left) * dpr - dx;
+  const py = (e.clientY - rect.top) * dpr - dy;
+  const msg = { type, x: Math.round(px / scale), y: Math.round(py / scale) };
   if (type === 'wheel') { msg.deltaX = e.deltaX; msg.deltaY = e.deltaY; }
   if (type !== 'mousemove') msg.button = e.button;
   remoteWs.send(JSON.stringify(msg));
@@ -717,17 +748,26 @@ async function executeScript(script, detail) {
 function renderInfoTab(tc) {
   if (!selectedDevice) return;
   const d = selectedDevice;
-  tc.innerHTML = '<div style="padding:16px;display:flex;flex-direction:column;gap:8px;font-size:13px">' +
-    '<div><span style="color:var(--muted)">Hostname: </span>' + esc(d.hostname) + '</div>' +
+  let html = '<div style="padding:16px;display:flex;flex-direction:column;gap:8px;font-size:13px">';
+  if (d.oblireach.updateAvailable) {
+    html += '<div style="background:var(--warn)/15;border:1px solid var(--warn)/40;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px">' +
+      '<span style="color:var(--warn);font-weight:600;font-size:12px">Update available</span>' +
+      '<span style="font-size:11px;color:var(--muted)">' + esc(d.oblireach.version || '?') + ' — a newer version is available. The agent will update automatically.</span>' +
+    '</div>';
+  }
+  html += '<div><span style="color:var(--muted)">Hostname: </span>' + esc(d.hostname) + '</div>' +
     '<div><span style="color:var(--muted)">Device ID: </span>' + d.id + '</div>' +
     '<div><span style="color:var(--muted)">UUID: </span><span style="font-family:monospace;font-size:11px">' + esc(d.uuid) + '</span></div>' +
     '<div><span style="color:var(--muted)">OS: </span>' + esc(d.osType) + '</div>' +
     '<div><span style="color:var(--muted)">Agent status: </span>' + esc(d.status) + '</div>' +
     '<div><span style="color:var(--muted)">Oblireach: </span>' +
-      (d.oblireach.installed ? (d.oblireach.online ? '✅ Online' : '⚠️ Offline') : '❌ Not installed') + '</div>' +
+      (d.oblireach.installed ? (d.oblireach.online ? 'Online' : 'Offline') : 'Not installed') +
+      (d.oblireach.version ? ' <span style="font-size:11px;color:var(--muted)">v' + esc(d.oblireach.version) + '</span>' : '') +
+    '</div>' +
     (d.oblireach.sessions?.length ? '<div><span style="color:var(--muted)">WTS sessions: </span>' +
       d.oblireach.sessions.map(s => s.username + ' (' + s.state + ')').join(', ') + '</div>' : '') +
   '</div>';
+  tc.innerHTML = html;
 }
 
 // ── Top bar buttons ───────────────────────────────────────────────────────────

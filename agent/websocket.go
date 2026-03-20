@@ -29,7 +29,10 @@ func wsConnect(rawURL string, extraHeaders http.Header) (*wsConn, error) {
 
 	var conn net.Conn
 	if scheme == "wss" {
-		conn, err = tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+		conn, err = tls.Dial("tcp", host, &tls.Config{
+			InsecureSkipVerify: true,
+			NextProtos:         []string{"http/1.1"},
+		})
 	} else {
 		conn, err = net.Dial("tcp", host)
 	}
