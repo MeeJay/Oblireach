@@ -6,6 +6,9 @@ package main
 
 import "fmt"
 
+var encodeInputCount int
+var encodeOutputCount int
+
 func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) {
 	return nil, fmt.Errorf("H.264 encoder not yet implemented on macOS (coming soon)")
 }
