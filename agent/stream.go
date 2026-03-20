@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"log"
 	"net/http"
 	"runtime"
@@ -14,8 +17,29 @@ import (
 // ── Frame type constants ───────────────────────────────────────────────────────
 
 const (
+	frameTypeJPEG = byte(0x01)
 	frameTypeH264 = byte(0x02)
 )
+
+// encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
+func encodeJPEG(bgra []byte, width, height, quality int) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	// BGRA → RGBA: swap B and R channels
+	for i := 0; i < width*height; i++ {
+		off := i * 4
+		img.Pix[off+0] = bgra[off+2] // R
+		img.Pix[off+1] = bgra[off+1] // G
+		img.Pix[off+2] = bgra[off+0] // B
+		img.Pix[off+3] = 255         // A
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
 
 // ── Session management ────────────────────────────────────────────────────────
 
@@ -192,7 +216,7 @@ func (s *StreamSession) run() {
 	defer frameTicker.Stop()
 
 	var pts int64
-	firstNALLogged := false
+	useJPEG := false
 
 	for {
 		select {
@@ -206,43 +230,53 @@ func (s *StreamSession) run() {
 			// Capture
 			w, h, err := captureFrame(bgraBuf)
 			if err != nil {
-				// DXGI timeout = no new frame — skip, reuse last
 				continue
 			}
 			if w != width || h != height {
-				// Resolution changed — reinit (future enhancement)
 				log.Printf("Stream %s: resolution changed %dx%d→%dx%d, reconnecting",
 					s.token, width, height, w, h)
 				return
 			}
 
-			// Encode
-			nalUnits, err := encodeFrame(bgraBuf, width, height, pts)
-			if err != nil {
-				log.Printf("Stream %s: encode error: %v", s.token, err)
-				continue
-			}
-			pts += int64(time.Second/time.Duration(fps)) / 100 // 100-ns units for WMF
+			if useJPEG {
+				// JPEG fallback path
+				jpegData, err := encodeJPEG(bgraBuf, width, height, 60)
+				if err != nil {
+					continue
+				}
+				frame := make([]byte, 1+len(jpegData))
+				frame[0] = frameTypeJPEG
+				copy(frame[1:], jpegData)
+				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+					log.Printf("Stream %s: send frame error: %v", s.token, err)
+					return
+				}
+			} else {
+				// H.264 path
+				nalUnits, err := encodeFrame(bgraBuf, width, height, pts)
+				if err != nil {
+					log.Printf("Stream %s: encode error: %v", s.token, err)
+					continue
+				}
+				pts += int64(time.Second/time.Duration(fps)) / 100
 
-			if len(nalUnits) == 0 {
-				continue // encoder buffering
-			}
+				if len(nalUnits) == 0 {
+					if encodeInputCount >= jpegFallbackThreshold && encodeOutputCount == 0 {
+						log.Printf("Stream %s: H.264 produced 0 output after %d frames → JPEG fallback",
+							s.token, encodeInputCount)
+						useJPEG = true
+						encoderClose()
+					}
+					continue
+				}
 
-			if !firstNALLogged && len(nalUnits) >= 8 {
-				firstNALLogged = true
-				log.Printf("Stream %s: first NAL bytes: %02x %02x %02x %02x %02x %02x %02x %02x (len=%d)",
-					s.token, nalUnits[0], nalUnits[1], nalUnits[2], nalUnits[3],
-					nalUnits[4], nalUnits[5], nalUnits[6], nalUnits[7], len(nalUnits))
-			}
-
-			// Send: [0x02][H264 Annex B data]
-			frame := make([]byte, 1+len(nalUnits))
-			frame[0] = frameTypeH264
-			copy(frame[1:], nalUnits)
-
-			if err := s.ws.WriteFrame(0x2, frame); err != nil {
-				log.Printf("Stream %s: send frame error: %v", s.token, err)
-				return
+				frame := make([]byte, 1+len(nalUnits))
+				frame[0] = frameTypeH264
+				copy(frame[1:], nalUnits)
+				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+					log.Printf("Stream %s: send frame error: %v", s.token, err)
+					return
+				}
 			}
 		}
 	}

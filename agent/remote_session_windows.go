@@ -124,10 +124,11 @@ import (
 //
 //	Framing: [4-byte uint32 LE payload length][1-byte type][payload]
 const (
-	pipeTypeInit  = byte(0x01) // helper → service: init JSON
-	pipeTypeFrame = byte(0x02) // helper → service: H.264 NAL units
-	pipeTypeInput = byte(0x03) // service → helper: input JSON
-	pipeTypeStop  = byte(0x04) // service → helper: stop signal
+	pipeTypeInit      = byte(0x01) // helper → service: init JSON
+	pipeTypeFrame     = byte(0x02) // helper → service: H.264 NAL units
+	pipeTypeInput     = byte(0x03) // service → helper: input JSON
+	pipeTypeStop      = byte(0x04) // service → helper: stop signal
+	pipeTypeJPEGFrame = byte(0x05) // helper → service: JPEG frame data
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -175,7 +176,11 @@ func runHelperMode(addr string) {
 		if f, err := os.OpenFile(
 			filepath.Join(tmpDir, "oblireach-helper.log"),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
-			log.SetOutput(io.MultiWriter(f, os.Stdout))
+			// Do NOT include os.Stdout — the helper runs as a no-window
+			// process; stdout may be a broken pipe that blocks writes.
+			log.SetOutput(f)
+			// Also use this file for encoder diagnostics (bypasses log pkg)
+			SetEncoderDiagFromLog(f)
 		}
 	}
 	log.Printf("helper: connecting to service at %s", addr)
@@ -264,7 +269,7 @@ func runHelperMode(addr string) {
 
 	var pts int64
 	firstFrameLogged := false
-	firstNALLogged := false
+	useJPEG := false
 
 	for {
 		select {
@@ -293,28 +298,31 @@ func runHelperMode(addr string) {
 				log.Printf("helper: resolution changed %dx%d→%dx%d, restarting", w, h, fw, fh)
 				return
 			}
-			if !firstNALLogged {
-				log.Printf("helper: calling encodeFrame #%d (%dx%d pts=%d)", encodeInputCount+1, w, h, pts)
-			}
-			nalUnits, err := encodeFrame(bgraBuf, w, h, pts)
-			if err != nil {
-				if encodeInputCount <= 5 {
-					log.Printf("helper: encodeFrame error: %v", err)
+			if useJPEG {
+				jpegData, err := encodeJPEG(bgraBuf, w, h, 60)
+				if err != nil {
+					continue
 				}
-				continue
-			}
-			pts += int64(time.Second/time.Duration(fps)) / 100
-			if len(nalUnits) == 0 {
-				continue
-			}
-			if !firstNALLogged && len(nalUnits) >= 8 {
-				firstNALLogged = true
-				log.Printf("helper: first NAL bytes: %02x %02x %02x %02x %02x %02x %02x %02x (len=%d)",
-					nalUnits[0], nalUnits[1], nalUnits[2], nalUnits[3],
-					nalUnits[4], nalUnits[5], nalUnits[6], nalUnits[7], len(nalUnits))
-			}
-			if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
-				return
+				if err := pipeSend(conn, pipeTypeJPEGFrame, jpegData); err != nil {
+					return
+				}
+			} else {
+				nalUnits, err := encodeFrame(bgraBuf, w, h, pts)
+				if err != nil {
+					continue
+				}
+				pts += int64(time.Second/time.Duration(fps)) / 100
+				if len(nalUnits) == 0 {
+					if encodeInputCount >= jpegFallbackThreshold && encodeOutputCount == 0 {
+						log.Printf("helper: H.264 produced 0 output after %d frames → JPEG fallback", encodeInputCount)
+						useJPEG = true
+						encoderClose()
+					}
+					continue
+				}
+				if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
+					return
+				}
 			}
 		}
 	}
@@ -461,9 +469,13 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			return
 		}
 
-		if msgType == pipeTypeFrame {
+		if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame {
+			ft := frameTypeH264
+			if msgType == pipeTypeJPEGFrame {
+				ft = frameTypeJPEG
+			}
 			frame := make([]byte, 1+len(payload))
-			frame[0] = frameTypeH264
+			frame[0] = ft
 			copy(frame[1:], payload)
 			if err := s.ws.WriteFrame(0x2, frame); err != nil {
 				log.Printf("Stream %s: send frame to browser failed: %v", s.token, err)

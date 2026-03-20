@@ -533,15 +533,32 @@ async function handleRemoteMessage(event) {
   const type = buf[0];
   const payload = buf.slice(1);
 
-  if (type === 0x02 && remoteDecoder) {
-    // Detect IDR keyframe in Annex B stream (start code + NAL type 5, 7 or 8)
+  if (type === 0x01) {
+    // JPEG frame — decode with createImageBitmap
+    const blob = new Blob([payload], { type: 'image/jpeg' });
+    createImageBitmap(blob).then(bmp => {
+      const canvas = document.getElementById('remote-canvas');
+      if (!canvas) return;
+      if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+        canvas.width = bmp.width;
+        canvas.height = bmp.height;
+      }
+      canvas.style.display = 'block';
+      const ph = document.getElementById('remote-placeholder');
+      if (ph) ph.style.display = 'none';
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.drawImage(bmp, 0, 0);
+      bmp.close();
+    }).catch(() => {});
+  } else if (type === 0x02 && remoteDecoder) {
+    // H.264 frame
     const isKey = isH264Keyframe(payload);
     const chunk = new EncodedVideoChunk({
       type: isKey ? 'key' : 'delta',
       timestamp: remoteTs,
       data: payload,
     });
-    remoteTs += Math.round(1000000 / 15); // ~15fps in microseconds
+    remoteTs += Math.round(1000000 / 15);
     try { remoteDecoder.decode(chunk); } catch {}
   }
 }

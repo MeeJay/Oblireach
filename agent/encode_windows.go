@@ -22,6 +22,7 @@ static int           g_enc_h     = 0;
 static int           g_fps       = 15;
 static int           g_bitrate   = 3000000;
 static int           g_frame_count = 0;
+static int           g_mft_provides_samples = 0;
 
 // BGRA to NV12 (BT.601 limited range, CPU software conversion)
 static void bgra_to_nv12(
@@ -151,9 +152,48 @@ static int encoder_init(
         ((UINT64)(UINT32)fps << 32) | 1ULL);
     IMFMediaType_SetUINT64(inType, &MF_MT_PIXEL_ASPECT_RATIO, (1ULL << 32) | 1ULL);
 
+    // Set the stride so the MFT knows the memory layout of our NV12 data.
+    // For NV12, default stride = width (bytes per row of Y plane).
+    IMFMediaType_SetUINT32(inType, &MF_MT_DEFAULT_STRIDE, (UINT32)w);
+
     hr = IMFTransform_SetInputType(g_encoder, 0, inType, 0);
     IMFMediaType_Release(inType);
     if (FAILED(hr)) { IUnknown_Release(g_encoder); g_encoder = NULL; return -4; }
+
+    // Check if the MFT provides its own output samples.
+    {
+        MFT_OUTPUT_STREAM_INFO osi;
+        memset(&osi, 0, sizeof(osi));
+        hr = IMFTransform_GetOutputStreamInfo(g_encoder, 0, &osi);
+        if (SUCCEEDED(hr) && (osi.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)) {
+            g_mft_provides_samples = 1;
+        }
+    }
+
+    // Write diagnostic to a dedicated file (bypasses Go log buffering issues)
+    {
+        const char *diagpath = "C:\\Users\\Public\\oblireach-encoder-diag.log";
+        FILE *diag = fopen(diagpath, "a");
+        if (diag) {
+            fprintf(diag, "encoder_init: %dx%d@%dfps br=%d mft_provides=%d\n",
+                    w, h, fps, bitrate, g_mft_provides_samples);
+
+            // Enumerate supported input types
+            int idx;
+            for (idx = 0; idx < 10; idx++) {
+                IMFMediaType *avail = NULL;
+                GUID subtype;
+                hr = IMFTransform_GetInputAvailableType(g_encoder, 0, idx, &avail);
+                if (FAILED(hr)) break;
+                IMFMediaType_GetGUID(avail, &MF_MT_SUBTYPE, &subtype);
+                fprintf(diag, "  input type[%d]: subtype={%08x-%04x-%04x-...}\n",
+                        idx, (unsigned)subtype.Data1,
+                        (unsigned)subtype.Data2, (unsigned)subtype.Data3);
+                IMFMediaType_Release(avail);
+            }
+            fclose(diag);
+        }
+    }
 
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
@@ -189,9 +229,13 @@ static int encode_frame(
 
     if (!g_encoder) return -1;
 
-    if (g_frame_count < 3) {
-        fprintf(stderr, "encode_frame: C entry #%d %dx%d\n", g_frame_count, w, h);
-        fflush(stderr);
+    if (g_frame_count < 5 || g_frame_count == 15 || g_frame_count == 30) {
+        FILE *df = fopen("C:\\Users\\Public\\oblireach-encoder-diag.log", "a");
+        if (df) {
+            fprintf(df, "encode_frame #%d: %dx%d provides=%d\n",
+                    g_frame_count, w, h, g_mft_provides_samples);
+            fclose(df);
+        }
     }
 
     nv12_size = w * h + (w * h / 2);
@@ -221,6 +265,12 @@ static int encode_frame(
     IMFSample_Release(inSample);
     if (FAILED(hr) && hr != MF_E_NOTACCEPTING) return -(int)(hr & 0xFFFF);
 
+    // Force the encoder to produce output after each input.  Without this,
+    // the software H.264 MFT on Windows Server buffers indefinitely.
+    // DRAIN tells the encoder "no more input is coming, flush everything".
+    // After draining, we restart streaming so the next ProcessInput works.
+    IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_COMMAND_DRAIN, 0);
+
     g_frame_count++;
     total = 0;
     for (;;) {
@@ -230,44 +280,88 @@ static int encode_frame(
         DWORD status = 0;
         DWORD bufCount = 0;
         DWORD i;
-
-        MFCreateSample(&outSample);
-        MFCreateMemoryBuffer(2*1024*1024, &outBuf);
-        IMFSample_AddBuffer(outSample, outBuf);
+        int we_own_sample = 0;
 
         memset(&outData, 0, sizeof(outData));
-        outData.pSample = outSample;
+
+        if (g_mft_provides_samples) {
+            // MFT provides its own sample — do NOT supply one
+            outData.pSample = NULL;
+        } else {
+            // We must provide the output sample
+            MFCreateSample(&outSample);
+            MFCreateMemoryBuffer(2*1024*1024, &outBuf);
+            IMFSample_AddBuffer(outSample, outBuf);
+            outData.pSample = outSample;
+            we_own_sample = 1;
+        }
 
         hr = IMFTransform_ProcessOutput(g_encoder, 0, 1, &outData, &status);
 
         if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-            IMFMediaBuffer_Release(outBuf);
-            IMFSample_Release(outSample);
+            if (g_frame_count <= 5) {
+                FILE *df2 = fopen("C:\\Users\\Public\\oblireach-encoder-diag.log", "a");
+                if (df2) {
+                    fprintf(df2, "  ProcessOutput #%d: NEED_MORE_INPUT (total=%d)\n",
+                            g_frame_count, total);
+                    fclose(df2);
+                }
+            }
+            if (we_own_sample) {
+                IMFMediaBuffer_Release(outBuf);
+                IMFSample_Release(outSample);
+            }
             break;
         }
         if (FAILED(hr)) {
-            IMFMediaBuffer_Release(outBuf);
-            IMFSample_Release(outSample);
+            {
+                FILE *df3 = fopen("C:\\Users\\Public\\oblireach-encoder-diag.log", "a");
+                if (df3) {
+                    fprintf(df3, "  ProcessOutput #%d: FAILED hr=0x%08x\n",
+                            g_frame_count, (unsigned)hr);
+                    fclose(df3);
+                }
+            }
+            if (we_own_sample) {
+                IMFMediaBuffer_Release(outBuf);
+                IMFSample_Release(outSample);
+            }
+            if (outData.pSample && !we_own_sample) {
+                IMFSample_Release(outData.pSample);
+            }
             break;
         }
 
-        IMFSample_GetBufferCount(outData.pSample, &bufCount);
-        for (i = 0; i < bufCount; i++) {
-            IMFMediaBuffer *b = NULL;
-            BYTE *data = NULL;
-            DWORD len = 0;
-            IMFSample_GetBufferByIndex(outData.pSample, i, &b);
-            IMFMediaBuffer_Lock(b, &data, NULL, &len);
-            if (total + (int)len <= out_cap) {
-                memcpy(out_buf + total, data, len);
-                total += (int)len;
+        // Successfully got output — extract bytes
+        if (outData.pSample) {
+            IMFSample_GetBufferCount(outData.pSample, &bufCount);
+            for (i = 0; i < bufCount; i++) {
+                IMFMediaBuffer *b = NULL;
+                BYTE *data = NULL;
+                DWORD len = 0;
+                IMFSample_GetBufferByIndex(outData.pSample, i, &b);
+                IMFMediaBuffer_Lock(b, &data, NULL, &len);
+                if (total + (int)len <= out_cap) {
+                    memcpy(out_buf + total, data, len);
+                    total += (int)len;
+                }
+                IMFMediaBuffer_Unlock(b);
+                IMFMediaBuffer_Release(b);
             }
-            IMFMediaBuffer_Unlock(b);
-            IMFMediaBuffer_Release(b);
         }
 
-        IMFMediaBuffer_Release(outBuf);
-        IMFSample_Release(outData.pSample);
+        if (we_own_sample) {
+            IMFMediaBuffer_Release(outBuf);
+            IMFSample_Release(outData.pSample);
+        } else if (outData.pSample) {
+            // MFT-provided sample — we must release it
+            IMFSample_Release(outData.pSample);
+        }
+    }
+
+    // Restart streaming after drain so the next ProcessInput is accepted.
+    if (total > 0 || g_frame_count > 1) {
+        IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
     }
 
     return total;
@@ -287,6 +381,8 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -297,9 +393,43 @@ var (
 	nalBuf            = make([]byte, maxNALBuf)
 	encodeInputCount  int
 	encodeOutputCount int
+	encodeDiagFile    *os.File
 )
 
+// openEncoderDiag opens a diagnostic file next to the helper log.
+func openEncoderDiag() {
+	// Try multiple paths — the helper's environment may be unexpected
+	paths := []string{
+		filepath.Join(os.TempDir(), "oblireach-encoder-diag.log"),
+		`C:\Users\Public\oblireach-encoder-diag.log`,
+		`C:\ProgramData\ObliReachAgent\encoder-diag.log`,
+	}
+	for _, p := range paths {
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err == nil {
+			encodeDiagFile = f
+			return
+		}
+	}
+}
+
+// SetEncoderDiagFromLog allows the helper to redirect encoder diagnostics
+// to the same writer as the helper log (which is known to work).
+func SetEncoderDiagFromLog(f *os.File) {
+	encodeDiagFile = f
+}
+
+func diagf(format string, args ...interface{}) {
+	if encodeDiagFile != nil {
+		fmt.Fprintf(encodeDiagFile, format+"\n", args...)
+		encodeDiagFile.Sync()
+	}
+}
+
 func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) {
+	openEncoderDiag()
+	diagf("encoderInit: %dx%d@%dfps bitrate=%d", width, height, fps, bitrate)
+
 	extBuf := make([]byte, 256)
 	var extSize C.int
 
@@ -309,9 +439,11 @@ func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) 
 		&extSize,
 	))
 	if ret < 0 {
+		diagf("encoderInit: FAILED code=%d", ret)
 		return nil, fmt.Errorf("WMF encoder init failed (code %d)", ret)
 	}
 	encoderInitDone = true
+	diagf("encoderInit: OK")
 	// extSize is always 0: SPS/PPS are embedded inline in the H.264 bitstream.
 	return nil, nil
 }
@@ -319,10 +451,6 @@ func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) 
 func encodeFrame(bgra []byte, width, height int, pts int64) ([]byte, error) {
 	if !encoderInitDone {
 		return nil, fmt.Errorf("encoder not initialised")
-	}
-
-	if encodeInputCount == 0 {
-		log.Printf("encode: about to encode first frame %dx%d pts=%d", width, height, pts)
 	}
 
 	n := int(C.encode_frame(
@@ -334,22 +462,20 @@ func encodeFrame(bgra []byte, width, height int, pts int64) ([]byte, error) {
 	))
 	encodeInputCount++
 	if n < 0 {
-		if encodeInputCount <= 5 || encodeInputCount%100 == 0 {
-			log.Printf("encode: frame %d failed (code %d)", encodeInputCount, n)
-		}
+		diagf("encodeFrame #%d: FAILED code=%d", encodeInputCount, n)
+		log.Printf("encode: frame %d failed (code %d)", encodeInputCount, n)
 		return nil, fmt.Errorf("encode_frame failed (code %d)", n)
 	}
 	if n == 0 {
 		if encodeInputCount <= 10 || encodeInputCount%100 == 0 {
-			log.Printf("encode: frame %d → 0 bytes (buffering, %d produced so far)", encodeInputCount, encodeOutputCount)
+			diagf("encodeFrame #%d: 0 bytes (buffering, %d produced)", encodeInputCount, encodeOutputCount)
 		}
 		return nil, nil
 	}
 
 	encodeOutputCount++
-	if encodeOutputCount <= 3 {
-		log.Printf("encode: frame %d → %d bytes (output #%d)", encodeInputCount, n, encodeOutputCount)
-	}
+	diagf("encodeFrame #%d: %d bytes (output #%d)", encodeInputCount, n, encodeOutputCount)
+	log.Printf("encode: frame %d → %d bytes (output #%d)", encodeInputCount, n, encodeOutputCount)
 
 	out := make([]byte, n)
 	copy(out, nalBuf[:n])
