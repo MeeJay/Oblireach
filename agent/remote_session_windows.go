@@ -263,6 +263,7 @@ func runHelperMode(addr string) {
 	defer frameTicker.Stop()
 
 	var pts int64
+	firstFrameLogged := false
 
 	for {
 		select {
@@ -279,6 +280,13 @@ func runHelperMode(addr string) {
 			fw, fh, err := captureFrame(bgraBuf)
 			if err != nil {
 				continue
+			}
+			if !firstFrameLogged && len(bgraBuf) >= 16 {
+				firstFrameLogged = true
+				log.Printf("helper: first frame captured %dx%d — pixels[0..3] BGRA: %d %d %d %d | [4..7]: %d %d %d %d",
+					fw, fh,
+					bgraBuf[0], bgraBuf[1], bgraBuf[2], bgraBuf[3],
+					bgraBuf[4], bgraBuf[5], bgraBuf[6], bgraBuf[7])
 			}
 			if fw != w || fh != h {
 				log.Printf("helper: resolution changed %dx%d→%dx%d, restarting", w, h, fw, fh)

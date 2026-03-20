@@ -214,10 +214,12 @@ static void capture_close(void) {
     g_width = 0;
     g_height = 0;
 }
+static int capture_is_gdi(void) { return g_use_gdi; }
 */
 import "C"
 import (
 	"fmt"
+	"log"
 	"unsafe"
 )
 
@@ -229,6 +231,11 @@ func captureInit() error {
 		return fmt.Errorf("screen capture init failed (code %d)", ret)
 	}
 	captureActive = true
+	if C.capture_is_gdi() != 0 {
+		log.Printf("helper: capture path = GDI (DXGI unavailable in this session)")
+	} else {
+		log.Printf("helper: capture path = DXGI Desktop Duplication")
+	}
 	return nil
 }
 
