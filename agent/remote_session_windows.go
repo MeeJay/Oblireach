@@ -264,6 +264,7 @@ func runHelperMode(addr string) {
 
 	var pts int64
 	firstFrameLogged := false
+	firstNALLogged := false
 
 	for {
 		select {
@@ -299,6 +300,12 @@ func runHelperMode(addr string) {
 			pts += int64(time.Second/time.Duration(fps)) / 100
 			if len(nalUnits) == 0 {
 				continue
+			}
+			if !firstNALLogged && len(nalUnits) >= 8 {
+				firstNALLogged = true
+				log.Printf("helper: first NAL bytes: %02x %02x %02x %02x %02x %02x %02x %02x (len=%d)",
+					nalUnits[0], nalUnits[1], nalUnits[2], nalUnits[3],
+					nalUnits[4], nalUnits[5], nalUnits[6], nalUnits[7], len(nalUnits))
 			}
 			if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
 				return

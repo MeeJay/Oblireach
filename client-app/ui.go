@@ -156,7 +156,26 @@ let selectedDevice = null;
 let activeTab = 'remote';
 let remoteWs = null;
 let remoteDecoder = null;
+let remoteTs = 0;
 let execAbort = null;
+
+// Detect IDR keyframe in H.264 Annex B stream
+function isH264Keyframe(data) {
+  let i = 0;
+  while (i < data.length - 4) {
+    if (data[i] === 0 && data[i+1] === 0) {
+      let nalStart = -1;
+      if (data[i+2] === 1) { nalStart = i + 3; i += 4; }
+      else if (data[i+2] === 0 && data[i+3] === 1) { nalStart = i + 4; i += 5; }
+      else { i++; continue; }
+      if (nalStart < data.length) {
+        const nalType = data[nalStart] & 0x1f;
+        if (nalType === 5 || nalType === 7 || nalType === 8) return true;
+      }
+    } else { i++; }
+  }
+  return false;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -515,12 +534,14 @@ async function handleRemoteMessage(event) {
   const payload = buf.slice(1);
 
   if (type === 0x02 && remoteDecoder) {
-    // H.264 frame
+    // Detect IDR keyframe in Annex B stream (start code + NAL type 5, 7 or 8)
+    const isKey = isH264Keyframe(payload);
     const chunk = new EncodedVideoChunk({
-      type: 'delta',
-      timestamp: performance.now() * 1000,
+      type: isKey ? 'key' : 'delta',
+      timestamp: remoteTs,
       data: payload,
     });
+    remoteTs += Math.round(1000000 / 15); // ~15fps in microseconds
     try { remoteDecoder.decode(chunk); } catch {}
   }
 }
@@ -544,7 +565,8 @@ async function initDecoder(info) {
     error(e) { console.warn('decoder error', e); }
   });
 
-  const config = { codec: 'avc1.42E01E', codedWidth: info.width, codedHeight: info.height };
+  remoteTs = 0;
+  const config = { codec: 'avc1.640034', codedWidth: info.width, codedHeight: info.height, optimizeForLatency: true };
   if (info.extradata) {
     // extradata is base64 from JSON
     const bin = atob(info.extradata);

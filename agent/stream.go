@@ -192,6 +192,7 @@ func (s *StreamSession) run() {
 	defer frameTicker.Stop()
 
 	var pts int64
+	firstNALLogged := false
 
 	for {
 		select {
@@ -225,6 +226,13 @@ func (s *StreamSession) run() {
 
 			if len(nalUnits) == 0 {
 				continue // encoder buffering
+			}
+
+			if !firstNALLogged && len(nalUnits) >= 8 {
+				firstNALLogged = true
+				log.Printf("Stream %s: first NAL bytes: %02x %02x %02x %02x %02x %02x %02x %02x (len=%d)",
+					s.token, nalUnits[0], nalUnits[1], nalUnits[2], nalUnits[3],
+					nalUnits[4], nalUnits[5], nalUnits[6], nalUnits[7], len(nalUnits))
 			}
 
 			// Send: [0x02][H264 Annex B data]

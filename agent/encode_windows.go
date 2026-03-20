@@ -296,7 +296,43 @@ func encodeFrame(bgra []byte, width, height int, pts int64) ([]byte, error) {
 
 	out := make([]byte, n)
 	copy(out, nalBuf[:n])
-	return out, nil
+	return ensureAnnexB(out), nil
+}
+
+// ensureAnnexB detects whether the H.264 data is Annex B (start codes) or
+// AVCC (4-byte length prefixes) and converts AVCC→Annex B if needed.
+// The WMF H.264 encoder *should* output Annex B, but some configurations
+// or hardware-assisted MFTs produce AVCC instead.
+func ensureAnnexB(data []byte) []byte {
+	if len(data) < 5 {
+		return data
+	}
+	// Check for Annex B start codes: 00 00 00 01 or 00 00 01
+	if (data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1) ||
+		(data[0] == 0 && data[1] == 0 && data[2] == 1) {
+		return data // already Annex B
+	}
+
+	// Assume AVCC: each NAL unit prefixed by 4-byte big-endian length.
+	// Convert to Annex B by replacing length prefixes with 00 00 00 01.
+	startCode := []byte{0x00, 0x00, 0x00, 0x01}
+	var out []byte
+	i := 0
+	for i+4 <= len(data) {
+		nalLen := int(data[i])<<24 | int(data[i+1])<<16 | int(data[i+2])<<8 | int(data[i+3])
+		i += 4
+		if nalLen <= 0 || i+nalLen > len(data) {
+			// Invalid length — return original data unchanged
+			return data
+		}
+		out = append(out, startCode...)
+		out = append(out, data[i:i+nalLen]...)
+		i += nalLen
+	}
+	if len(out) == 0 {
+		return data
+	}
+	return out
 }
 
 func encoderClose() {
