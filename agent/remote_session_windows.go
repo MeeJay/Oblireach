@@ -293,8 +293,14 @@ func runHelperMode(addr string) {
 				log.Printf("helper: resolution changed %dx%d→%dx%d, restarting", w, h, fw, fh)
 				return
 			}
+			if !firstNALLogged {
+				log.Printf("helper: calling encodeFrame #%d (%dx%d pts=%d)", encodeInputCount+1, w, h, pts)
+			}
 			nalUnits, err := encodeFrame(bgraBuf, w, h, pts)
 			if err != nil {
+				if encodeInputCount <= 5 {
+					log.Printf("helper: encodeFrame error: %v", err)
+				}
 				continue
 			}
 			pts += int64(time.Second/time.Duration(fps)) / 100

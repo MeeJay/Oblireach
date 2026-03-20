@@ -4,9 +4,10 @@ package main
 
 /*
 #cgo CFLAGS: -DCOBJMACROS -DINITGUID
-#cgo LDFLAGS: -lmfplat -lmf -lmfuuid -luuid -lole32 -lstrmiids
+#cgo LDFLAGS: -lmfplat -lmf -lmfuuid -luuid -lole32 -loleaut32 -lstrmiids
 
 #include <windows.h>
+#include <stdio.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mftransform.h>
@@ -20,6 +21,7 @@ static int           g_enc_w     = 0;
 static int           g_enc_h     = 0;
 static int           g_fps       = 15;
 static int           g_bitrate   = 3000000;
+static int           g_frame_count = 0;
 
 // BGRA to NV12 (BT.601 limited range, CPU software conversion)
 static void bgra_to_nv12(
@@ -92,6 +94,36 @@ static int encoder_init(
     }
     if (FAILED(hr)) return -2;
 
+    // Enable low-latency mode via ICodecAPI BEFORE setting media types
+    // (Microsoft docs: "Set encoding properties before calling SetOutputType").
+    // GUIDs defined manually — MinGW headers do not include these.
+    {
+        static const GUID AVLowLatencyMode =
+            { 0x9c27891a, 0xed7a, 0x40e1, {0x88, 0xe8, 0xb2, 0x27, 0x27, 0xa0, 0x24, 0xee} };
+        static const GUID AVEncMPVGOPSize =
+            { 0x95f31b26, 0x95a4, 0x41aa, {0x93, 0x03, 0x24, 0x6a, 0x7f, 0xc6, 0xee, 0xf1} };
+
+        ICodecAPI *codecApi = NULL;
+        hr = IUnknown_QueryInterface(g_encoder, &IID_ICodecAPI, (void**)&codecApi);
+        if (SUCCEEDED(hr) && codecApi) {
+            VARIANT v;
+            VariantInit(&v);
+
+            // AVLowLatencyMode = TRUE — minimal buffering, produce output ASAP
+            v.vt = VT_BOOL;
+            v.boolVal = VARIANT_TRUE;
+            ICodecAPI_SetValue(codecApi, &AVLowLatencyMode, &v);
+
+            // Force IDR every N frames (short GOP for keyframe detection)
+            VariantInit(&v);
+            v.vt = VT_UI4;
+            v.ulVal = (ULONG)fps;  // IDR every ~1 second
+            ICodecAPI_SetValue(codecApi, &AVEncMPVGOPSize, &v);
+
+            IUnknown_Release(codecApi);
+        }
+    }
+
     // Output type: H.264
     MFCreateMediaType(&outType);
     IMFMediaType_SetGUID(outType, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
@@ -123,7 +155,6 @@ static int encoder_init(
     IMFMediaType_Release(inType);
     if (FAILED(hr)) { IUnknown_Release(g_encoder); g_encoder = NULL; return -4; }
 
-    IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_COMMAND_FLUSH, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
@@ -136,6 +167,7 @@ static int encoder_init(
     g_enc_h   = h;
     g_fps     = fps;
     g_bitrate = bitrate;
+    g_frame_count = 0;
     return 0;
 }
 
@@ -156,6 +188,11 @@ static int encode_frame(
     int total;
 
     if (!g_encoder) return -1;
+
+    if (g_frame_count < 3) {
+        fprintf(stderr, "encode_frame: C entry #%d %dx%d\n", g_frame_count, w, h);
+        fflush(stderr);
+    }
 
     nv12_size = w * h + (w * h / 2);
     nv12 = (unsigned char*)malloc(nv12_size);
@@ -182,8 +219,9 @@ static int encode_frame(
 
     hr = IMFTransform_ProcessInput(g_encoder, 0, inSample, 0);
     IMFSample_Release(inSample);
-    if (FAILED(hr) && hr != MF_E_NOTACCEPTING) return -1;
+    if (FAILED(hr) && hr != MF_E_NOTACCEPTING) return -(int)(hr & 0xFFFF);
 
+    g_frame_count++;
     total = 0;
     for (;;) {
         IMFSample *outSample = NULL;
@@ -248,14 +286,17 @@ static void encoder_close(void) {
 import "C"
 import (
 	"fmt"
+	"log"
 	"unsafe"
 )
 
 const maxNALBuf = 4 * 1024 * 1024 // 4 MB output buffer
 
 var (
-	encoderInitDone bool
-	nalBuf          = make([]byte, maxNALBuf)
+	encoderInitDone   bool
+	nalBuf            = make([]byte, maxNALBuf)
+	encodeInputCount  int
+	encodeOutputCount int
 )
 
 func encoderInit(width, height, fps, bitrate int) (extradata []byte, err error) {
@@ -280,6 +321,10 @@ func encodeFrame(bgra []byte, width, height int, pts int64) ([]byte, error) {
 		return nil, fmt.Errorf("encoder not initialised")
 	}
 
+	if encodeInputCount == 0 {
+		log.Printf("encode: about to encode first frame %dx%d pts=%d", width, height, pts)
+	}
+
 	n := int(C.encode_frame(
 		(*C.uchar)(unsafe.Pointer(&bgra[0])),
 		C.int(width), C.int(height),
@@ -287,11 +332,23 @@ func encodeFrame(bgra []byte, width, height int, pts int64) ([]byte, error) {
 		(*C.uchar)(unsafe.Pointer(&nalBuf[0])),
 		C.int(maxNALBuf),
 	))
+	encodeInputCount++
 	if n < 0 {
-		return nil, fmt.Errorf("encode_frame failed")
+		if encodeInputCount <= 5 || encodeInputCount%100 == 0 {
+			log.Printf("encode: frame %d failed (code %d)", encodeInputCount, n)
+		}
+		return nil, fmt.Errorf("encode_frame failed (code %d)", n)
 	}
 	if n == 0 {
+		if encodeInputCount <= 10 || encodeInputCount%100 == 0 {
+			log.Printf("encode: frame %d → 0 bytes (buffering, %d produced so far)", encodeInputCount, encodeOutputCount)
+		}
 		return nil, nil
+	}
+
+	encodeOutputCount++
+	if encodeOutputCount <= 3 {
+		log.Printf("encode: frame %d → %d bytes (output #%d)", encodeInputCount, n, encodeOutputCount)
 	}
 
 	out := make([]byte, n)
