@@ -266,6 +266,9 @@ func (s *StreamSession) run() {
 							s.token, encodeInputCount)
 						useJPEG = true
 						encoderClose()
+						// Notify browser of codec switch
+						switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": "jpeg"})
+						_ = s.ws.WriteFrame(0x1, switchMsg)
 					}
 					continue
 				}

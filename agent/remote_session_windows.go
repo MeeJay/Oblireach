@@ -451,6 +451,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 	}()
 
 	// Helper → browser: read pipe frames, forward as WS binary frames.
+	jpegNotified := false
 	for {
 		select {
 		case <-s.stopCh:
@@ -473,6 +474,11 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			ft := frameTypeH264
 			if msgType == pipeTypeJPEGFrame {
 				ft = frameTypeJPEG
+				if !jpegNotified {
+					jpegNotified = true
+					switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": "jpeg"})
+					_ = s.ws.WriteFrame(0x1, switchMsg)
+				}
 			}
 			frame := make([]byte, 1+len(payload))
 			frame[0] = ft

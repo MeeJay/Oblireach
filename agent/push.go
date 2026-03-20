@@ -116,6 +116,15 @@ func handleCommand(cfg *Config, cmd *command) {
 				sessionID = int(f)
 			}
 		}
+		// Notify the user in the target session.
+		username, _ := cmd.Payload["username"].(string)
+		if username != "" {
+			notifyTarget := sessionID
+			if notifyTarget < 0 {
+				notifyTarget = findCaptureSession()
+			}
+			go notifySession(notifyTarget, username, true)
+		}
 		if err := startStream(cfg, token, sessionID); err != nil {
 			log.Printf("Command %s: startStream failed: %v", cmd.ID, err)
 		}
@@ -123,6 +132,13 @@ func handleCommand(cfg *Config, cmd *command) {
 	case "close_remote_tunnel":
 		token, _ := cmd.Payload["sessionToken"].(string)
 		if token != "" {
+			// Notify the user in the target session before stopping.
+			username, _ := cmd.Payload["username"].(string)
+			if username != "" {
+				// Use the session where the stream is running.
+				notifyTarget := findCaptureSession()
+				go notifySession(notifyTarget, username, false)
+			}
 			stopStream(token)
 		}
 

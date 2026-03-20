@@ -515,11 +515,16 @@ async function handleRemoteMessage(event) {
     try {
       const info = JSON.parse(event.data);
       if (info.type === 'paired') return; // agent connected — stream starting
+      if (info.type === 'codec_switch') {
+        const statusEl = document.getElementById('remote-status');
+        if (statusEl) statusEl.textContent = statusEl.textContent.replace(/\s*·\s*(H\.264|JPEG)/, '') + ' · ' + (info.codec === 'jpeg' ? 'JPEG' : 'H.264');
+        return;
+      }
       // Init message: { type:'init', width, height, fps, codec, extradata? }
       if (!info.width || !info.height) return;
       await initDecoder(info);
       const statusEl = document.getElementById('remote-status');
-      if (statusEl) statusEl.textContent = info.width + '×' + info.height + ' @ ' + info.fps + 'fps';
+      if (statusEl) statusEl.textContent = info.width + '×' + info.height + ' @ ' + info.fps + 'fps · H.264';
       const canvas = document.getElementById('remote-canvas');
       const ph = document.getElementById('remote-placeholder');
       if (canvas) { canvas.width = info.width; canvas.height = info.height; canvas.style.display = 'block'; }
