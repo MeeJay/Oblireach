@@ -232,7 +232,7 @@ func runHelperMode(addr string) {
 	}
 
 	fps := 30
-	bitrate := 5_000_000
+	bitrate := 10_000_000
 
 	// ── Init encoder (OpenH264 > WMF > JPEG fallback) ───────────────────────
 	useOpenH264 := false
@@ -376,7 +376,7 @@ func runHelperMode(addr string) {
 				return
 			}
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, w, h, 40)
+				jpegData, err := encodeJPEG(bgraBuf, w, h, 25)
 				if err != nil {
 					continue
 				}

@@ -44,7 +44,7 @@ func encodeJPEG(bgra []byte, width, height, quality int) ([]byte, error) {
 // Reusable JPEG encoder state (avoids allocation per frame)
 var (
 	jpegBuf  bytes.Buffer
-	jpegOpts = &jpeg.Options{Quality: 40}
+	jpegOpts = &jpeg.Options{Quality: 25}
 )
 
 const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
@@ -52,12 +52,12 @@ const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
 // ── Adaptive bitrate ─────────────────────────────────────────────────────────
 
 const (
-	bitrateMin      = 500_000   // 500 Kbps floor
-	bitrateMax      = 20_000_000 // 20 Mbps ceiling
-	bitrateStart    = 5_000_000  // 5 Mbps initial
-	bitrateWindow   = 30         // frames per adjustment window
-	bitrateStepUp   = 1.15       // +15% when healthy
-	bitrateStepDown = 0.70       // -30% when congested
+	bitrateMin      = 1_000_000   // 1 Mbps floor
+	bitrateMax      = 100_000_000 // 100 Mbps ceiling
+	bitrateStart    = 10_000_000  // 10 Mbps initial
+	bitrateWindow   = 30          // frames per adjustment window
+	bitrateStepUp   = 1.25        // +25% when healthy
+	bitrateStepDown = 0.60        // -40% when congested
 )
 
 type adaptiveBitrate struct {
@@ -211,7 +211,7 @@ func (s *StreamSession) run() {
 	}
 
 	fps := 30
-	bitrate := 5_000_000 // 5 Mbps
+	bitrate := 10_000_000 // 10 Mbps
 
 	// ── Initialize encoder (OpenH264 > WMF > JPEG fallback) ─────────────────
 	useOpenH264 := false
@@ -387,7 +387,7 @@ func (s *StreamSession) run() {
 			}
 
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, width, height, 40)
+				jpegData, err := encodeJPEG(bgraBuf, width, height, 25)
 				if err != nil {
 					continue
 				}
