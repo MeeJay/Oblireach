@@ -1,0 +1,8 @@
+//go:build !windows
+
+package main
+
+func openH264Available() bool                                              { return false }
+func openH264Init(width, height, fps, bitrate int) error                   { return nil }
+func openH264EncodeFrame(bgra []byte, width, height int, ts int64) ([]byte, error) { return nil, nil }
+func openH264Close()                                                       {}

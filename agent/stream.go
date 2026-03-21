@@ -145,13 +145,28 @@ func (s *StreamSession) run() {
 	fps := 15
 	bitrate := 3_000_000 // 3 Mbps
 
-	// ── Initialize encoder ────────────────────────────────────────────────────
-	extradata, err := encoderInit(width, height, fps, bitrate)
-	if err != nil {
-		log.Printf("Stream %s: encoderInit failed: %v", s.token, err)
-		return
+	// ── Initialize encoder (OpenH264 > WMF > JPEG fallback) ─────────────────
+	useOpenH264 := false
+	if openH264Available() {
+		if err := openH264Init(width, height, fps, bitrate); err != nil {
+			log.Printf("Stream %s: OpenH264 init failed: %v — trying WMF", s.token, err)
+		} else {
+			useOpenH264 = true
+			log.Printf("Stream %s: using OpenH264 encoder", s.token)
+		}
 	}
-	defer encoderClose()
+	if !useOpenH264 {
+		if _, err := encoderInit(width, height, fps, bitrate); err != nil {
+			log.Printf("Stream %s: WMF encoderInit failed: %v — JPEG only", s.token, err)
+		}
+	}
+	defer func() {
+		if useOpenH264 {
+			openH264Close()
+		} else {
+			encoderClose()
+		}
+	}()
 
 	// ── Send init message ─────────────────────────────────────────────────────
 	initMsg := map[string]interface{}{
@@ -160,10 +175,6 @@ func (s *StreamSession) run() {
 		"height": height,
 		"fps":    fps,
 		"codec":  "h264",
-	}
-	if len(extradata) > 0 {
-		// AVCC extradata (SPS+PPS): base64-encoded for the browser VideoDecoder
-		initMsg["extradata"] = extradata
 	}
 
 	initJSON, _ := json.Marshal(initMsg)
@@ -221,6 +232,7 @@ func (s *StreamSession) run() {
 	defer frameTicker.Stop()
 
 	var pts int64
+	var tsMs int64
 	useJPEG := false
 
 	for {
@@ -232,7 +244,6 @@ func (s *StreamSession) run() {
 			s.handleInput(payload, width, height)
 
 		case <-frameTicker.C:
-			// Capture
 			w, h, err := captureFrame(bgraBuf)
 			if err != nil {
 				continue
@@ -244,7 +255,6 @@ func (s *StreamSession) run() {
 			}
 
 			if useJPEG {
-				// JPEG fallback path
 				jpegData, err := encodeJPEG(bgraBuf, width, height, 60)
 				if err != nil {
 					continue
@@ -253,36 +263,46 @@ func (s *StreamSession) run() {
 				frame[0] = frameTypeJPEG
 				copy(frame[1:], jpegData)
 				if err := s.ws.WriteFrame(0x2, frame); err != nil {
-					log.Printf("Stream %s: send frame error: %v", s.token, err)
+					return
+				}
+			} else if useOpenH264 {
+				nalUnits, err := openH264EncodeFrame(bgraBuf, width, height, tsMs)
+				tsMs += int64(1000 / fps)
+				if err != nil {
+					log.Printf("Stream %s: OpenH264 error: %v", s.token, err)
+					continue
+				}
+				if len(nalUnits) == 0 {
+					continue
+				}
+				frame := make([]byte, 1+len(nalUnits))
+				frame[0] = frameTypeH264
+				copy(frame[1:], nalUnits)
+				if err := s.ws.WriteFrame(0x2, frame); err != nil {
 					return
 				}
 			} else {
-				// H.264 path
+				// WMF H.264 path with JPEG fallback
 				nalUnits, err := encodeFrame(bgraBuf, width, height, pts)
 				if err != nil {
-					log.Printf("Stream %s: encode error: %v", s.token, err)
 					continue
 				}
 				pts += int64(time.Second/time.Duration(fps)) / 100
-
 				if len(nalUnits) == 0 {
 					if encodeInputCount >= jpegFallbackThreshold && encodeOutputCount == 0 {
-						log.Printf("Stream %s: H.264 produced 0 output after %d frames → JPEG fallback",
+						log.Printf("Stream %s: WMF H.264 produced 0 output after %d frames → JPEG fallback",
 							s.token, encodeInputCount)
 						useJPEG = true
 						encoderClose()
-						// Notify browser of codec switch
 						switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": "jpeg"})
 						_ = s.ws.WriteFrame(0x1, switchMsg)
 					}
 					continue
 				}
-
 				frame := make([]byte, 1+len(nalUnits))
 				frame[0] = frameTypeH264
 				copy(frame[1:], nalUnits)
 				if err := s.ws.WriteFrame(0x2, frame); err != nil {
-					log.Printf("Stream %s: send frame error: %v", s.token, err)
 					return
 				}
 			}

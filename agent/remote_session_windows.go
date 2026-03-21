@@ -232,12 +232,28 @@ func runHelperMode(addr string) {
 	fps := 15
 	bitrate := 3_000_000
 
-	// ── Init encoder ─────────────────────────────────────────────────────────
-	extradata, err := encoderInit(w, h, fps, bitrate)
-	if err != nil {
-		log.Fatalf("helper: encoderInit failed: %v", err)
+	// ── Init encoder (OpenH264 > WMF > JPEG fallback) ───────────────────────
+	useOpenH264 := false
+	if openH264Available() {
+		if err := openH264Init(w, h, fps, bitrate); err != nil {
+			log.Printf("helper: OpenH264 init failed: %v — trying WMF", err)
+		} else {
+			useOpenH264 = true
+			log.Printf("helper: using OpenH264 encoder")
+		}
 	}
-	defer encoderClose()
+	if !useOpenH264 {
+		if _, err := encoderInit(w, h, fps, bitrate); err != nil {
+			log.Printf("helper: WMF encoderInit failed: %v — JPEG only", err)
+		}
+	}
+	defer func() {
+		if useOpenH264 {
+			openH264Close()
+		} else {
+			encoderClose()
+		}
+	}()
 
 	// ── Send init message to service ─────────────────────────────────────────
 	initMsg := map[string]interface{}{
@@ -246,9 +262,6 @@ func runHelperMode(addr string) {
 		"height": h,
 		"fps":    fps,
 		"codec":  "h264",
-	}
-	if len(extradata) > 0 {
-		initMsg["extradata"] = extradata
 	}
 	initJSON, _ := json.Marshal(initMsg)
 	if err := pipeSend(conn, pipeTypeInit, initJSON); err != nil {
@@ -286,6 +299,7 @@ func runHelperMode(addr string) {
 	defer frameTicker.Stop()
 
 	var pts int64
+	var tsMs int64
 	firstFrameLogged := false
 	useJPEG := false
 
@@ -324,6 +338,19 @@ func runHelperMode(addr string) {
 				if err := pipeSend(conn, pipeTypeJPEGFrame, jpegData); err != nil {
 					return
 				}
+			} else if useOpenH264 {
+				nalUnits, err := openH264EncodeFrame(bgraBuf, w, h, tsMs)
+				tsMs += int64(1000 / fps)
+				if err != nil {
+					log.Printf("helper: OpenH264 error: %v", err)
+					continue
+				}
+				if len(nalUnits) == 0 {
+					continue
+				}
+				if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
+					return
+				}
 			} else {
 				nalUnits, err := encodeFrame(bgraBuf, w, h, pts)
 				if err != nil {
@@ -332,7 +359,7 @@ func runHelperMode(addr string) {
 				pts += int64(time.Second/time.Duration(fps)) / 100
 				if len(nalUnits) == 0 {
 					if encodeInputCount >= jpegFallbackThreshold && encodeOutputCount == 0 {
-						log.Printf("helper: H.264 produced 0 output after %d frames → JPEG fallback", encodeInputCount)
+						log.Printf("helper: WMF H.264 produced 0 output after %d frames → JPEG fallback", encodeInputCount)
 						useJPEG = true
 						encoderClose()
 					}
