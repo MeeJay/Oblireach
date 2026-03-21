@@ -21,6 +21,7 @@ const (
 	frameTypeH264 = byte(0x02)
 	frameTypeVP9  = byte(0x03)
 	frameTypeH265 = byte(0x04)
+	frameTypeAV1  = byte(0x05)
 )
 
 // encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
@@ -45,7 +46,7 @@ func encodeJPEG(bgra []byte, width, height, quality int) ([]byte, error) {
 // Reusable JPEG encoder state (avoids allocation per frame)
 var (
 	jpegBuf  bytes.Buffer
-	jpegOpts = &jpeg.Options{Quality: 25}
+	jpegOpts = &jpeg.Options{Quality: 15}
 )
 
 const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
@@ -55,10 +56,10 @@ const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
 const (
 	bitrateMin      = 1_000_000   // 1 Mbps floor
 	bitrateMax      = 100_000_000 // 100 Mbps ceiling
-	bitrateStart    = 10_000_000  // 10 Mbps initial
-	bitrateWindow   = 30          // frames per adjustment window
-	bitrateStepUp   = 1.25        // +25% when healthy
-	bitrateStepDown = 0.60        // -40% when congested
+	bitrateStart    = 20_000_000  // 20 Mbps initial — start high, drop if needed
+	bitrateWindow   = 15          // adjust every 0.5s at 30fps
+	bitrateStepUp   = 1.40        // +40% when healthy
+	bitrateStepDown = 0.50        // -50% when congested
 )
 
 type adaptiveBitrate struct {
@@ -212,7 +213,7 @@ func (s *StreamSession) run() {
 	}
 
 	fps := 30
-	bitrate := 10_000_000 // 10 Mbps
+	bitrate := 20_000_000 // 20 Mbps
 
 	// ── Initialize encoder (OpenH264 > WMF > JPEG fallback) ─────────────────
 	useOpenH264 := false
@@ -315,6 +316,7 @@ func (s *StreamSession) run() {
 	useJPEG := false
 	useVP9 := false
 	useH265 := false
+	useAV1 := false
 	ab := newAdaptiveBitrate(fps)
 
 	sendAndAdapt := func(frame []byte) error {
@@ -349,6 +351,7 @@ func (s *StreamSession) run() {
 			if useOpenH264 { openH264Close(); useOpenH264 = false }
 			if useVP9 { vp9EncoderClose(); useVP9 = false }
 			if useH265 { h265EncoderClose(); useH265 = false }
+			if useAV1 { av1EncoderClose(); useAV1 = false }
 			if !useJPEG { encoderClose() }
 			useJPEG = false
 
@@ -373,6 +376,12 @@ func (s *StreamSession) run() {
 				if err := vp9EncoderInit(width, height, fps, bitrate/1000); err == nil {
 					useVP9 = true
 				} else { useJPEG = true }
+			case "av1":
+				if av1Available() {
+					if err := av1EncoderInit(width, height, fps, bitrate/1000); err == nil {
+						useAV1 = true
+					} else { useJPEG = true }
+				} else { useJPEG = true }
 			case "jpeg":
 				useJPEG = true
 			}
@@ -392,7 +401,7 @@ func (s *StreamSession) run() {
 			}
 
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, width, height, 25)
+				jpegData, err := encodeJPEG(bgraBuf, width, height, 15)
 				if err != nil {
 					continue
 				}
@@ -402,6 +411,14 @@ func (s *StreamSession) run() {
 				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
+			} else if useAV1 {
+				av1Data, err := av1EncodeFrame(bgraBuf, width, height)
+				if err != nil { continue }
+				if len(av1Data) == 0 { continue }
+				frame := make([]byte, 1+len(av1Data))
+				frame[0] = frameTypeAV1
+				copy(frame[1:], av1Data)
+				if err := sendAndAdapt(frame); err != nil { return }
 			} else if useH265 {
 				h265Data, err := h265EncodeFrame(bgraBuf, width, height)
 				if err != nil {

@@ -145,6 +145,7 @@ const (
 	pipeTypeVP9Frame  = byte(0x06) // helper → service: VP9 frame data
 	pipeTypeControl   = byte(0x07) // helper → service: JSON control (forwarded as WS text)
 	pipeTypeH265Frame = byte(0x08) // helper → service: H.265 frame data
+	pipeTypeAV1Frame  = byte(0x09) // helper → service: AV1 frame data
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -233,7 +234,7 @@ func runHelperMode(addr string) {
 	}
 
 	fps := 30
-	bitrate := 10_000_000
+	bitrate := 20_000_000
 
 	// ── Init encoder (OpenH264 > WMF > JPEG fallback) ───────────────────────
 	useOpenH264 := false
@@ -320,6 +321,7 @@ func runHelperMode(addr string) {
 	useJPEG := false
 	useVP9 := false
 	useH265 := false
+	useAV1 := false
 
 	for {
 		select {
@@ -337,6 +339,7 @@ func runHelperMode(addr string) {
 			if useOpenH264 { openH264Close(); useOpenH264 = false }
 			if useVP9 { vp9EncoderClose(); useVP9 = false }
 			if useH265 { h265EncoderClose(); useH265 = false }
+			if useAV1 { av1EncoderClose(); useAV1 = false }
 			if !useJPEG { encoderClose() }
 			useJPEG = false
 
@@ -357,6 +360,12 @@ func runHelperMode(addr string) {
 			case "vp9":
 				if err := vp9EncoderInit(w, h, fps, bitrate/1000); err == nil {
 					useVP9 = true
+				} else { useJPEG = true }
+			case "av1":
+				if av1Available() {
+					if err := av1EncoderInit(w, h, fps, bitrate/1000); err == nil {
+						useAV1 = true
+					} else { useJPEG = true }
 				} else { useJPEG = true }
 			case "jpeg":
 				useJPEG = true
@@ -383,13 +392,18 @@ func runHelperMode(addr string) {
 				return
 			}
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, w, h, 25)
+				jpegData, err := encodeJPEG(bgraBuf, w, h, 15)
 				if err != nil {
 					continue
 				}
 				if err := pipeSend(conn, pipeTypeJPEGFrame, jpegData); err != nil {
 					return
 				}
+			} else if useAV1 {
+				av1Data, err := av1EncodeFrame(bgraBuf, w, h)
+				if err != nil { continue }
+				if len(av1Data) == 0 { continue }
+				if err := pipeSend(conn, pipeTypeAV1Frame, av1Data); err != nil { return }
 			} else if useH265 {
 				h265Data, err := h265EncodeFrame(bgraBuf, w, h)
 				if err != nil { continue }
@@ -583,7 +597,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 				log.Printf("Stream %s: send control to browser failed: %v", s.token, err)
 				return
 			}
-		} else if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame || msgType == pipeTypeH265Frame {
+		} else if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame || msgType == pipeTypeH265Frame || msgType == pipeTypeAV1Frame {
 			ft := frameTypeH264
 			if msgType == pipeTypeJPEGFrame {
 				ft = frameTypeJPEG
@@ -591,6 +605,8 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 				ft = frameTypeVP9
 			} else if msgType == pipeTypeH265Frame {
 				ft = frameTypeH265
+			} else if msgType == pipeTypeAV1Frame {
+				ft = frameTypeAV1
 			}
 			frame := make([]byte, 1+len(payload))
 			frame[0] = ft
