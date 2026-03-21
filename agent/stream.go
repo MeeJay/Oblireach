@@ -20,6 +20,7 @@ const (
 	frameTypeJPEG = byte(0x01)
 	frameTypeH264 = byte(0x02)
 	frameTypeVP9  = byte(0x03)
+	frameTypeH265 = byte(0x04)
 )
 
 // encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
@@ -313,6 +314,7 @@ func (s *StreamSession) run() {
 	var tsMs int64
 	useJPEG := false
 	useVP9 := false
+	useH265 := false
 	ab := newAdaptiveBitrate(fps)
 
 	sendAndAdapt := func(frame []byte) error {
@@ -346,6 +348,7 @@ func (s *StreamSession) run() {
 			// Tear down current encoder
 			if useOpenH264 { openH264Close(); useOpenH264 = false }
 			if useVP9 { vp9EncoderClose(); useVP9 = false }
+			if useH265 { h265EncoderClose(); useH265 = false }
 			if !useJPEG { encoderClose() }
 			useJPEG = false
 
@@ -354,24 +357,26 @@ func (s *StreamSession) run() {
 				if openH264Available() {
 					if err := openH264Init(width, height, fps, bitrate); err == nil {
 						useOpenH264 = true
-						log.Printf("Stream %s: switched to OpenH264", s.token)
 					}
 				}
-				if !useOpenH264 {
-					useJPEG = true // fallback
-				}
+				if !useOpenH264 { useJPEG = true }
+			case "h265":
+				if h265Available() {
+					if err := h265EncoderInit(width, height, fps, bitrate/1000); err == nil {
+						useH265 = true
+					} else {
+						log.Printf("Stream %s: H.265 init failed: %v", s.token, err)
+						useJPEG = true
+					}
+				} else { useJPEG = true }
 			case "vp9":
 				if err := vp9EncoderInit(width, height, fps, bitrate/1000); err == nil {
 					useVP9 = true
-					log.Printf("Stream %s: switched to VP9", s.token)
-				} else {
-					log.Printf("Stream %s: VP9 init failed: %v — fallback JPEG", s.token, err)
-					useJPEG = true
-				}
+				} else { useJPEG = true }
 			case "jpeg":
 				useJPEG = true
-				log.Printf("Stream %s: switched to JPEG", s.token)
 			}
+			log.Printf("Stream %s: switched to %s", s.token, newCodec)
 			switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": newCodec})
 			_ = s.ws.WriteFrame(0x1, switchMsg)
 
@@ -394,6 +399,20 @@ func (s *StreamSession) run() {
 				frame := make([]byte, 1+len(jpegData))
 				frame[0] = frameTypeJPEG
 				copy(frame[1:], jpegData)
+				if err := sendAndAdapt(frame); err != nil {
+					return
+				}
+			} else if useH265 {
+				h265Data, err := h265EncodeFrame(bgraBuf, width, height)
+				if err != nil {
+					continue
+				}
+				if len(h265Data) == 0 {
+					continue
+				}
+				frame := make([]byte, 1+len(h265Data))
+				frame[0] = frameTypeH265
+				copy(frame[1:], h265Data)
 				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
