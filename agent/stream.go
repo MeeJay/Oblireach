@@ -19,6 +19,7 @@ import (
 const (
 	frameTypeJPEG = byte(0x01)
 	frameTypeH264 = byte(0x02)
+	frameTypeVP9  = byte(0x03)
 )
 
 // encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
@@ -204,6 +205,7 @@ func (s *StreamSession) run() {
 
 	// ── Input handler (browser → agent) ──────────────────────────────────────
 	inputCh := make(chan []byte, 64)
+	codecCh := make(chan string, 4) // codec switch requests
 	go func() {
 		defer s.stop()
 		for {
@@ -216,10 +218,19 @@ func (s *StreamSession) run() {
 				return
 			case 0x9: // ping
 				_ = s.ws.SendPong(payload)
-			case 0x1: // text = JSON control (mouse, key, resize_viewport)
-				select {
-				case inputCh <- payload:
-				default: // drop if buffer full
+			case 0x1: // text = JSON control
+				// Check for codec switch command
+				var peek struct{ Type, Codec string }
+				if json.Unmarshal(payload, &peek) == nil && peek.Type == "set_codec" {
+					select {
+					case codecCh <- peek.Codec:
+					default:
+					}
+				} else {
+					select {
+					case inputCh <- payload:
+					default:
+					}
 				}
 			}
 		}
@@ -234,6 +245,7 @@ func (s *StreamSession) run() {
 	var pts int64
 	var tsMs int64
 	useJPEG := false
+	useVP9 := false
 
 	for {
 		select {
@@ -242,6 +254,40 @@ func (s *StreamSession) run() {
 
 		case payload := <-inputCh:
 			s.handleInput(payload, width, height)
+
+		case newCodec := <-codecCh:
+			log.Printf("Stream %s: codec switch requested: %s", s.token, newCodec)
+			// Tear down current encoder
+			if useOpenH264 { openH264Close(); useOpenH264 = false }
+			if useVP9 { vp9EncoderClose(); useVP9 = false }
+			if !useJPEG { encoderClose() }
+			useJPEG = false
+
+			switch newCodec {
+			case "h264":
+				if openH264Available() {
+					if err := openH264Init(width, height, fps, bitrate); err == nil {
+						useOpenH264 = true
+						log.Printf("Stream %s: switched to OpenH264", s.token)
+					}
+				}
+				if !useOpenH264 {
+					useJPEG = true // fallback
+				}
+			case "vp9":
+				if err := vp9EncoderInit(width, height, fps, bitrate/1000); err == nil {
+					useVP9 = true
+					log.Printf("Stream %s: switched to VP9", s.token)
+				} else {
+					log.Printf("Stream %s: VP9 init failed: %v — fallback JPEG", s.token, err)
+					useJPEG = true
+				}
+			case "jpeg":
+				useJPEG = true
+				log.Printf("Stream %s: switched to JPEG", s.token)
+			}
+			switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": newCodec})
+			_ = s.ws.WriteFrame(0x1, switchMsg)
 
 		case <-frameTicker.C:
 			w, h, err := captureFrame(bgraBuf)
@@ -262,6 +308,21 @@ func (s *StreamSession) run() {
 				frame := make([]byte, 1+len(jpegData))
 				frame[0] = frameTypeJPEG
 				copy(frame[1:], jpegData)
+				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+					return
+				}
+			} else if useVP9 {
+				vp9Data, err := vp9EncodeFrame(bgraBuf, width, height)
+				if err != nil {
+					log.Printf("Stream %s: VP9 error: %v", s.token, err)
+					continue
+				}
+				if len(vp9Data) == 0 {
+					continue
+				}
+				frame := make([]byte, 1+len(vp9Data))
+				frame[0] = frameTypeVP9
+				copy(frame[1:], vp9Data)
 				if err := s.ws.WriteFrame(0x2, frame); err != nil {
 					return
 				}

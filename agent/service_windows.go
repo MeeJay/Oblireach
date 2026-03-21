@@ -10,6 +10,16 @@ import (
 )
 
 var (
+	modKernel32        = syscall.NewLazyDLL("kernel32.dll")
+	procSetDllDirectory = modKernel32.NewProc("SetDllDirectoryW")
+)
+
+func setDLLSearchPath(dir string) {
+	p, _ := syscall.UTF16PtrFromString(dir)
+	procSetDllDirectory.Call(uintptr(unsafe.Pointer(p)))
+}
+
+var (
 	modAdvapi32                      = syscall.NewLazyDLL("advapi32.dll")
 	procStartServiceCtrlDispatcherW  = modAdvapi32.NewProc("StartServiceCtrlDispatcherW")
 	procRegisterServiceCtrlHandlerEx = modAdvapi32.NewProc("RegisterServiceCtrlHandlerExW")

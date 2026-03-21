@@ -142,6 +142,7 @@ const (
 	pipeTypeInput     = byte(0x03) // service → helper: input JSON
 	pipeTypeStop      = byte(0x04) // service → helper: stop signal
 	pipeTypeJPEGFrame = byte(0x05) // helper → service: JPEG frame data
+	pipeTypeVP9Frame  = byte(0x06) // helper → service: VP9 frame data
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -271,6 +272,7 @@ func runHelperMode(addr string) {
 
 	stopCh := make(chan struct{})
 	inputCh := make(chan []byte, 64)
+	codecCh := make(chan string, 4)
 
 	// ── Reader goroutine: input / stop from service ───────────────────────────
 	go func() {
@@ -282,9 +284,17 @@ func runHelperMode(addr string) {
 			}
 			switch msgType {
 			case pipeTypeInput:
-				select {
-				case inputCh <- payload:
-				default:
+				var peek struct{ Type, Codec string }
+				if json.Unmarshal(payload, &peek) == nil && peek.Type == "set_codec" {
+					select {
+					case codecCh <- peek.Codec:
+					default:
+					}
+				} else {
+					select {
+					case inputCh <- payload:
+					default:
+					}
 				}
 			case pipeTypeStop:
 				close(stopCh)
@@ -302,6 +312,7 @@ func runHelperMode(addr string) {
 	var tsMs int64
 	firstFrameLogged := false
 	useJPEG := false
+	useVP9 := false
 
 	for {
 		select {
@@ -310,9 +321,35 @@ func runHelperMode(addr string) {
 
 		case payload, ok := <-inputCh:
 			if !ok {
-				return // service disconnected
+				return
 			}
 			dispatchInputJSON(payload, w, h)
+
+		case newCodec := <-codecCh:
+			log.Printf("helper: codec switch requested: %s", newCodec)
+			if useOpenH264 { openH264Close(); useOpenH264 = false }
+			if useVP9 { vp9EncoderClose(); useVP9 = false }
+			if !useJPEG { encoderClose() }
+			useJPEG = false
+
+			switch newCodec {
+			case "h264":
+				if openH264Available() {
+					if err := openH264Init(w, h, fps, bitrate); err == nil {
+						useOpenH264 = true
+					}
+				}
+				if !useOpenH264 { useJPEG = true }
+			case "vp9":
+				if err := vp9EncoderInit(w, h, fps, bitrate/1000); err == nil {
+					useVP9 = true
+				} else {
+					useJPEG = true
+				}
+			case "jpeg":
+				useJPEG = true
+			}
+			log.Printf("helper: switched to %s", newCodec)
 
 		case <-frameTicker.C:
 			fw, fh, err := captureFrame(bgraBuf)
@@ -336,6 +373,17 @@ func runHelperMode(addr string) {
 					continue
 				}
 				if err := pipeSend(conn, pipeTypeJPEGFrame, jpegData); err != nil {
+					return
+				}
+			} else if useVP9 {
+				vp9Data, err := vp9EncodeFrame(bgraBuf, w, h)
+				if err != nil {
+					continue
+				}
+				if len(vp9Data) == 0 {
+					continue
+				}
+				if err := pipeSend(conn, pipeTypeVP9Frame, vp9Data); err != nil {
 					return
 				}
 			} else if useOpenH264 {
@@ -496,7 +544,6 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 	}()
 
 	// Helper → browser: read pipe frames, forward as WS binary frames.
-	jpegNotified := false
 	for {
 		select {
 		case <-s.stopCh:
@@ -515,15 +562,12 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			return
 		}
 
-		if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame {
+		if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame {
 			ft := frameTypeH264
 			if msgType == pipeTypeJPEGFrame {
 				ft = frameTypeJPEG
-				if !jpegNotified {
-					jpegNotified = true
-					switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": "jpeg"})
-					_ = s.ws.WriteFrame(0x1, switchMsg)
-				}
+			} else if msgType == pipeTypeVP9Frame {
+				ft = frameTypeVP9
 			}
 			frame := make([]byte, 1+len(payload))
 			frame[0] = ft

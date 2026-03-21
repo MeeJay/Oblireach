@@ -133,6 +133,12 @@ func setupConfig(urlArg, keyArg string) *Config {
 }
 
 func main() {
+	// Ensure DLLs next to the exe are found (required for Windows services
+	// whose working directory is System32, not the exe's directory).
+	if exe, err := os.Executable(); err == nil {
+		setDLLSearchPath(filepath.Dir(exe))
+	}
+
 	setupLogging()
 
 	urlFlag         := flag.String("url", "", "Obliance server URL (first run only)")
