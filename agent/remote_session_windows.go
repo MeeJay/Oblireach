@@ -120,6 +120,18 @@ import (
 	"unsafe"
 )
 
+// spawnInSessionGo is a Go-friendly wrapper around the C spawnInSession function.
+// Returns (pid, returnCode). returnCode 0 = success.
+func spawnInSessionGo(sessionID int, cmdLine string) (uint32, int) {
+	cmdLineW, err := syscall.UTF16PtrFromString(cmdLine)
+	if err != nil {
+		return 0, -1
+	}
+	var pid C.DWORD
+	rc := int(C.spawnInSession(C.DWORD(sessionID), (*C.wchar_t)(unsafe.Pointer(cmdLineW)), &pid))
+	return uint32(pid), rc
+}
+
 // ── TCP pipe message types ────────────────────────────────────────────────────
 //
 //	Framing: [4-byte uint32 LE payload length][1-byte type][payload]

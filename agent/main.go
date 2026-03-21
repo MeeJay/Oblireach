@@ -139,7 +139,17 @@ func main() {
 	keyFlag         := flag.String("key", "", "Oblireach API key (first run only)")
 	captureHelper   := flag.Bool("capture-helper", false, "Run as a capture helper subprocess (internal use)")
 	helperAddr      := flag.String("addr", "", "TCP address for capture helper to connect to")
+	notifyTitle     := flag.String("notify-title", "", "Show a toast notification with this title (internal use)")
+	notifyMsg       := flag.String("notify-msg", "", "Toast notification message body")
+	notifyTimeout   := flag.Int("notify-timeout", 8, "Toast auto-close timeout in seconds")
 	flag.Parse()
+
+	// ── Toast notification subprocess mode ───────────────────────────────────
+	// Launched by the service process inside a user session to show a toast.
+	if *notifyTitle != "" {
+		runToastNotification(*notifyTitle, *notifyMsg, *notifyTimeout)
+		return
+	}
 
 	// ── Capture helper subprocess mode ───────────────────────────────────────
 	// Launched by the service process inside a user session to perform DXGI capture.

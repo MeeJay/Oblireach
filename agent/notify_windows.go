@@ -7,25 +7,6 @@ package main
 #include <windows.h>
 #include <wtsapi32.h>
 
-// showNotification sends a non-blocking message box to the specified WTS session.
-// The dialog auto-closes after timeoutSec seconds.
-static int showNotification(DWORD sessionId, const wchar_t *title, const wchar_t *message, DWORD timeoutSec) {
-	DWORD response = 0;
-	BOOL ok = WTSSendMessageW(
-		WTS_CURRENT_SERVER_HANDLE,
-		sessionId,
-		(LPWSTR)title,
-		(DWORD)(wcslen(title) * sizeof(wchar_t)),
-		(LPWSTR)message,
-		(DWORD)(wcslen(message) * sizeof(wchar_t)),
-		MB_OK | MB_ICONINFORMATION,
-		timeoutSec,
-		&response,
-		FALSE  // bWait=FALSE: return immediately
-	);
-	return ok ? 0 : -(int)GetLastError();
-}
-
 // getUILanguage returns the primary language ID of the user's default UI language.
 static LANGID getUILanguage(void) {
 	return PRIMARYLANGID(GetUserDefaultUILanguage());
@@ -33,13 +14,14 @@ static LANGID getUILanguage(void) {
 */
 import "C"
 import (
+	"fmt"
 	"log"
-	"syscall"
-	"unsafe"
+	"os"
 )
 
-// notifySession shows a temporary notification in the given WTS session.
-// It detects the OS UI language and displays the message in French or English.
+// notifySession shows a toast notification in the given WTS session.
+// It spawns a helper subprocess in the target session that displays a
+// custom dark toast popup in the bottom-right corner (no ugly MessageBox).
 func notifySession(sessionID int, username string, connected bool) {
 	lang := uint16(C.getUILanguage())
 	// LANG_FRENCH = 0x0C
@@ -64,16 +46,19 @@ func notifySession(sessionID int, username string, connected bool) {
 		}
 	}
 
-	titleW, _ := syscall.UTF16FromString(title)
-	msgW, _ := syscall.UTF16FromString(msg)
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("notifySession: os.Executable: %v", err)
+		return
+	}
 
-	rc := C.showNotification(
-		C.DWORD(sessionID),
-		(*C.wchar_t)(unsafe.Pointer(&titleW[0])),
-		(*C.wchar_t)(unsafe.Pointer(&msgW[0])),
-		10, // auto-close after 10 seconds
-	)
+	cmdLine := fmt.Sprintf(`"%s" --notify-title "%s" --notify-msg "%s" --notify-timeout 8`,
+		exe, title, msg)
+
+	pid, rc := spawnInSessionGo(sessionID, cmdLine)
 	if rc != 0 {
-		log.Printf("notifySession: WTSSendMessage failed for session %d: %d", sessionID, rc)
+		log.Printf("notifySession: spawn in session %d failed: %d", sessionID, rc)
+	} else {
+		log.Printf("notifySession: toast PID %d in session %d", pid, sessionID)
 	}
 }
