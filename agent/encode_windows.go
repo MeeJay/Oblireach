@@ -265,11 +265,9 @@ static int encode_frame(
     IMFSample_Release(inSample);
     if (FAILED(hr) && hr != MF_E_NOTACCEPTING) return -(int)(hr & 0xFFFF);
 
-    // Force the encoder to produce output after each input.  Without this,
-    // the software H.264 MFT on Windows Server buffers indefinitely.
-    // DRAIN tells the encoder "no more input is coming, flush everything".
-    // After draining, we restart streaming so the next ProcessInput works.
-    IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_COMMAND_DRAIN, 0);
+    // Note: do NOT call MFT_MESSAGE_COMMAND_DRAIN after every frame.
+    // With runtime.LockOSThread() ensuring COM thread affinity, the
+    // encoder should produce output normally after a few buffered frames.
 
     g_frame_count++;
     total = 0;
@@ -357,11 +355,6 @@ static int encode_frame(
             // MFT-provided sample — we must release it
             IMFSample_Release(outData.pSample);
         }
-    }
-
-    // Restart streaming after drain so the next ProcessInput is accepted.
-    if (total > 0 || g_frame_count > 1) {
-        IMFTransform_ProcessMessage(g_encoder, MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
     }
 
     return total;

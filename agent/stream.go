@@ -123,6 +123,11 @@ func stopStream(token string) {
 func (s *StreamSession) run() {
 	defer s.stop()
 
+	// Lock this goroutine to its OS thread for the entire stream lifetime.
+	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	// ── Initialize capture ────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
 		log.Printf("Stream %s: captureInit failed: %v", s.token, err)

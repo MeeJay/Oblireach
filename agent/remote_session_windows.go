@@ -115,6 +115,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -210,6 +211,11 @@ func runHelperMode(addr string) {
 		log.Fatalf("helper: could not connect to service: %v", err)
 	}
 	defer conn.Close()
+
+	// Lock this goroutine to its OS thread for the entire helper lifetime.
+	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
