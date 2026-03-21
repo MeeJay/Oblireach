@@ -285,18 +285,22 @@ func runHelperMode(addr string) {
 			}
 			switch msgType {
 			case pipeTypeInput:
-				var peek struct{ Type, Codec string }
-				if json.Unmarshal(payload, &peek) == nil && peek.Type == "set_codec" {
-					select {
-					case codecCh <- peek.Codec:
-					default:
+				var peek struct {
+					Type    string `json:"type"`
+					Codec   string `json:"codec"`
+					Bitrate int    `json:"bitrate"`
+				}
+				if json.Unmarshal(payload, &peek) == nil {
+					if peek.Type == "set_codec" {
+						select { case codecCh <- peek.Codec: default: }
+						continue
 					}
-				} else {
-					select {
-					case inputCh <- payload:
-					default:
+					if peek.Type == "set_bitrate" && peek.Bitrate > 0 {
+						openH264SetBitrate(peek.Bitrate)
+						continue
 					}
 				}
+				select { case inputCh <- payload: default: }
 			case pipeTypeStop:
 				close(stopCh)
 				return
@@ -548,6 +552,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 	}()
 
 	// Helper → browser: read pipe frames, forward as WS binary frames.
+	ab := newAdaptiveBitrate(30) // match the helper's fps
 	for {
 		select {
 		case <-s.stopCh:
@@ -582,9 +587,20 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			frame := make([]byte, 1+len(payload))
 			frame[0] = ft
 			copy(frame[1:], payload)
+
+			sendStart := time.Now()
 			if err := s.ws.WriteFrame(0x2, frame); err != nil {
 				log.Printf("Stream %s: send frame to browser failed: %v", s.token, err)
 				return
+			}
+			if newBr := ab.report(time.Since(sendStart)); newBr > 0 {
+				// Tell helper to adjust bitrate
+				brCmd, _ := json.Marshal(map[string]interface{}{"type": "set_bitrate", "bitrate": newBr})
+				_ = pipeSend(conn, pipeTypeInput, brCmd)
+				// Tell browser the new bitrate
+				brMsg, _ := json.Marshal(map[string]interface{}{"type": "bitrate", "bitrate": newBr})
+				_ = s.ws.WriteFrame(0x1, brMsg)
+				log.Printf("Stream %s: adaptive bitrate → %d kbps", s.token, newBr/1000)
 			}
 		}
 	}
