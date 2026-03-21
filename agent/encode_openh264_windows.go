@@ -57,8 +57,20 @@ typedef enum {
 typedef enum {
     OH_ENCODER_OPTION_DATAFORMAT = 0,
     OH_ENCODER_OPTION_IDR_INTERVAL = 1,
+    OH_ENCODER_OPTION_SVC_ENCODE_PARAM_BASE = 2,
+    OH_ENCODER_OPTION_BITRATE = 7,
+    OH_ENCODER_OPTION_MAX_BITRATE = 8,
     OH_ENCODER_OPTION_TRACE_LEVEL = 27
 } OH_ENCODER_OPTION;
+
+typedef struct {
+    int iUsageType;
+    int iPicWidth;
+    int iPicHeight;
+    int iTargetBitrate;
+    int iRCMode;
+    float fMaxFrameRate;
+} OH_SEncParamBase;
 
 typedef enum {
     OH_CONSTANT_ID = 0,
@@ -375,6 +387,22 @@ static void oh_encoder_close(void) {
     }
 }
 
+// ── Set bitrate at runtime ────────────────────────────────────────────────
+
+static int oh_set_bitrate(int bitrate) {
+    if (!g_oh_encoder) return -1;
+    OH_SEncParamBase param;
+    memset(&param, 0, sizeof(param));
+    param.iUsageType = OH_SCREEN_CONTENT_REAL_TIME;
+    param.iPicWidth = g_oh_w;
+    param.iPicHeight = g_oh_h;
+    param.iTargetBitrate = bitrate;
+    param.iRCMode = OH_RC_BITRATE_MODE;
+    param.fMaxFrameRate = 30.0f;
+    return g_oh_encoder->lpVtbl->SetOption(g_oh_encoder,
+        OH_ENCODER_OPTION_SVC_ENCODE_PARAM_BASE, &param);
+}
+
 // ── Check if DLL is available ─────────────────────────────────────────────
 
 static int oh_available(void) {
@@ -438,6 +466,12 @@ func openH264EncodeFrame(bgra []byte, width, height int, timestampMs int64) ([]b
 	out := make([]byte, n)
 	copy(out, ohNalBuf[:n])
 	return out, nil
+}
+
+func openH264SetBitrate(bitrate int) {
+	if ohInitDone {
+		C.oh_set_bitrate(C.int(bitrate))
+	}
 }
 
 func openH264Close() {

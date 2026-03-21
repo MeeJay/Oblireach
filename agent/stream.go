@@ -25,22 +25,89 @@ const (
 // encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
 func encodeJPEG(bgra []byte, width, height, quality int) ([]byte, error) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	// BGRA → RGBA: swap B and R channels
-	for i := 0; i < width*height; i++ {
-		off := i * 4
-		img.Pix[off+0] = bgra[off+2] // R
-		img.Pix[off+1] = bgra[off+1] // G
-		img.Pix[off+2] = bgra[off+0] // B
-		img.Pix[off+3] = 255         // A
+	pix := img.Pix
+	// BGRA → RGBA: swap B and R in bulk (4 bytes at a time)
+	n := width * height * 4
+	for i := 0; i < n; i += 4 {
+		pix[i+0] = bgra[i+2] // R
+		pix[i+1] = bgra[i+1] // G
+		pix[i+2] = bgra[i+0] // B
+		pix[i+3] = 255       // A
 	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+	jpegBuf.Reset()
+	if err := jpeg.Encode(&jpegBuf, img, jpegOpts); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return jpegBuf.Bytes(), nil
 }
 
+// Reusable JPEG encoder state (avoids allocation per frame)
+var (
+	jpegBuf  bytes.Buffer
+	jpegOpts = &jpeg.Options{Quality: 40}
+)
+
 const jpegFallbackThreshold = 30 // switch after N frames with 0 H.264 output
+
+// ── Adaptive bitrate ─────────────────────────────────────────────────────────
+
+const (
+	bitrateMin      = 500_000   // 500 Kbps floor
+	bitrateMax      = 20_000_000 // 20 Mbps ceiling
+	bitrateStart    = 5_000_000  // 5 Mbps initial
+	bitrateWindow   = 30         // frames per adjustment window
+	bitrateStepUp   = 1.15       // +15% when healthy
+	bitrateStepDown = 0.70       // -30% when congested
+)
+
+type adaptiveBitrate struct {
+	current    int
+	slowFrames int // frames where send took > budget
+	totalFrames int
+	budget     time.Duration // max send time per frame
+}
+
+func newAdaptiveBitrate(fps int) *adaptiveBitrate {
+	return &adaptiveBitrate{
+		current: bitrateStart,
+		budget:  time.Second / time.Duration(fps),
+	}
+}
+
+// report records one frame's send duration and returns the new bitrate
+// if an adjustment is needed (0 = no change).
+func (ab *adaptiveBitrate) report(sendTime time.Duration) int {
+	ab.totalFrames++
+	if sendTime > ab.budget {
+		ab.slowFrames++
+	}
+	if ab.totalFrames < bitrateWindow {
+		return 0
+	}
+
+	slowRatio := float64(ab.slowFrames) / float64(ab.totalFrames)
+	prev := ab.current
+
+	if slowRatio > 0.2 {
+		// >20% frames are slow → reduce
+		ab.current = int(float64(ab.current) * bitrateStepDown)
+	} else if slowRatio < 0.05 {
+		// <5% slow → room to grow
+		ab.current = int(float64(ab.current) * bitrateStepUp)
+	}
+
+	// Clamp
+	if ab.current < bitrateMin { ab.current = bitrateMin }
+	if ab.current > bitrateMax { ab.current = bitrateMax }
+
+	ab.slowFrames = 0
+	ab.totalFrames = 0
+
+	if ab.current != prev {
+		return ab.current
+	}
+	return 0
+}
 
 // ── Session management ────────────────────────────────────────────────────────
 
@@ -143,8 +210,8 @@ func (s *StreamSession) run() {
 		return
 	}
 
-	fps := 15
-	bitrate := 3_000_000 // 3 Mbps
+	fps := 30
+	bitrate := 5_000_000 // 5 Mbps
 
 	// ── Initialize encoder (OpenH264 > WMF > JPEG fallback) ─────────────────
 	useOpenH264 := false
@@ -246,6 +313,25 @@ func (s *StreamSession) run() {
 	var tsMs int64
 	useJPEG := false
 	useVP9 := false
+	ab := newAdaptiveBitrate(fps)
+
+	sendAndAdapt := func(frame []byte) error {
+		start := time.Now()
+		err := s.ws.WriteFrame(0x2, frame)
+		if err != nil {
+			return err
+		}
+		if newBr := ab.report(time.Since(start)); newBr > 0 {
+			if useOpenH264 {
+				openH264SetBitrate(newBr)
+			}
+			// Notify browser of bitrate change
+			brMsg, _ := json.Marshal(map[string]interface{}{"type": "bitrate", "bitrate": newBr})
+			_ = s.ws.WriteFrame(0x1, brMsg)
+			log.Printf("Stream %s: adaptive bitrate → %d kbps", s.token, newBr/1000)
+		}
+		return nil
+	}
 
 	for {
 		select {
@@ -301,20 +387,19 @@ func (s *StreamSession) run() {
 			}
 
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, width, height, 60)
+				jpegData, err := encodeJPEG(bgraBuf, width, height, 40)
 				if err != nil {
 					continue
 				}
 				frame := make([]byte, 1+len(jpegData))
 				frame[0] = frameTypeJPEG
 				copy(frame[1:], jpegData)
-				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
 			} else if useVP9 {
 				vp9Data, err := vp9EncodeFrame(bgraBuf, width, height)
 				if err != nil {
-					log.Printf("Stream %s: VP9 error: %v", s.token, err)
 					continue
 				}
 				if len(vp9Data) == 0 {
@@ -323,14 +408,13 @@ func (s *StreamSession) run() {
 				frame := make([]byte, 1+len(vp9Data))
 				frame[0] = frameTypeVP9
 				copy(frame[1:], vp9Data)
-				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
 			} else if useOpenH264 {
 				nalUnits, err := openH264EncodeFrame(bgraBuf, width, height, tsMs)
 				tsMs += int64(1000 / fps)
 				if err != nil {
-					log.Printf("Stream %s: OpenH264 error: %v", s.token, err)
 					continue
 				}
 				if len(nalUnits) == 0 {
@@ -339,11 +423,10 @@ func (s *StreamSession) run() {
 				frame := make([]byte, 1+len(nalUnits))
 				frame[0] = frameTypeH264
 				copy(frame[1:], nalUnits)
-				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
 			} else {
-				// WMF H.264 path with JPEG fallback
 				nalUnits, err := encodeFrame(bgraBuf, width, height, pts)
 				if err != nil {
 					continue
@@ -351,8 +434,6 @@ func (s *StreamSession) run() {
 				pts += int64(time.Second/time.Duration(fps)) / 100
 				if len(nalUnits) == 0 {
 					if encodeInputCount >= jpegFallbackThreshold && encodeOutputCount == 0 {
-						log.Printf("Stream %s: WMF H.264 produced 0 output after %d frames → JPEG fallback",
-							s.token, encodeInputCount)
 						useJPEG = true
 						encoderClose()
 						switchMsg, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": "jpeg"})
@@ -363,7 +444,7 @@ func (s *StreamSession) run() {
 				frame := make([]byte, 1+len(nalUnits))
 				frame[0] = frameTypeH264
 				copy(frame[1:], nalUnits)
-				if err := s.ws.WriteFrame(0x2, frame); err != nil {
+				if err := sendAndAdapt(frame); err != nil {
 					return
 				}
 			}

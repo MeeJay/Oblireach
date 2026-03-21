@@ -143,6 +143,7 @@ const (
 	pipeTypeStop      = byte(0x04) // service → helper: stop signal
 	pipeTypeJPEGFrame = byte(0x05) // helper → service: JPEG frame data
 	pipeTypeVP9Frame  = byte(0x06) // helper → service: VP9 frame data
+	pipeTypeControl   = byte(0x07) // helper → service: JSON control (forwarded as WS text)
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -230,8 +231,8 @@ func runHelperMode(addr string) {
 		log.Fatalf("helper: invalid capture dimensions %dx%d", w, h)
 	}
 
-	fps := 15
-	bitrate := 3_000_000
+	fps := 30
+	bitrate := 5_000_000
 
 	// ── Init encoder (OpenH264 > WMF > JPEG fallback) ───────────────────────
 	useOpenH264 := false
@@ -350,6 +351,9 @@ func runHelperMode(addr string) {
 				useJPEG = true
 			}
 			log.Printf("helper: switched to %s", newCodec)
+			// Send codec_switch confirmation to service (→ browser)
+			switchJSON, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": newCodec})
+			_ = pipeSend(conn, pipeTypeControl, switchJSON)
 
 		case <-frameTicker.C:
 			fw, fh, err := captureFrame(bgraBuf)
@@ -368,7 +372,7 @@ func runHelperMode(addr string) {
 				return
 			}
 			if useJPEG {
-				jpegData, err := encodeJPEG(bgraBuf, w, h, 60)
+				jpegData, err := encodeJPEG(bgraBuf, w, h, 40)
 				if err != nil {
 					continue
 				}
@@ -562,7 +566,13 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			return
 		}
 
-		if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame {
+		if msgType == pipeTypeControl {
+			// Forward JSON control message to browser as WS text frame
+			if err := s.ws.WriteFrame(0x1, payload); err != nil {
+				log.Printf("Stream %s: send control to browser failed: %v", s.token, err)
+				return
+			}
+		} else if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame {
 			ft := frameTypeH264
 			if msgType == pipeTypeJPEGFrame {
 				ft = frameTypeJPEG
