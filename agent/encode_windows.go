@@ -24,10 +24,11 @@ static int           g_bitrate   = 3000000;
 static int           g_frame_count = 0;
 static int           g_mft_provides_samples = 0;
 
-// BGRA to NV12 (BT.601 limited range, CPU software conversion)
-static void bgra_to_nv12(
+// BGRA to I420/IYUV (BT.601 limited range, CPU software conversion)
+// I420 layout: Y plane (w*h), U plane (w/2 * h/2), V plane (w/2 * h/2)
+static void bgra_to_i420(
     const unsigned char *bgra, int w, int h,
-    unsigned char *y_plane, unsigned char *uv_plane)
+    unsigned char *y_plane, unsigned char *u_plane, unsigned char *v_plane)
 {
     int stride = w * 4;
     int row, col;
@@ -42,7 +43,8 @@ static void bgra_to_nv12(
     for (row = 0; row < h/2; row++) {
         const unsigned char *s0 = bgra + (row*2)   * stride;
         const unsigned char *s1 = bgra + (row*2+1) * stride;
-        unsigned char *uvdst = uv_plane + row * w;
+        unsigned char *udst = u_plane + row * (w/2);
+        unsigned char *vdst = v_plane + row * (w/2);
         for (col = 0; col < w/2; col++) {
             int b = ((int)s0[col*2*4+0] + s0[(col*2+1)*4+0] +
                           s1[col*2*4+0] + s1[(col*2+1)*4+0]) >> 2;
@@ -50,8 +52,8 @@ static void bgra_to_nv12(
                           s1[col*2*4+1] + s1[(col*2+1)*4+1]) >> 2;
             int r = ((int)s0[col*2*4+2] + s0[(col*2+1)*4+2] +
                           s1[col*2*4+2] + s1[(col*2+1)*4+2]) >> 2;
-            uvdst[col*2]   = (unsigned char)(((-43*r -  85*g + 128*b + 128) >> 8) + 128);
-            uvdst[col*2+1] = (unsigned char)(((128*r - 107*g -  21*b + 128) >> 8) + 128);
+            udst[col] = (unsigned char)(((-43*r -  85*g + 128*b + 128) >> 8) + 128);
+            vdst[col] = (unsigned char)(((128*r - 107*g -  21*b + 128) >> 8) + 128);
         }
     }
 }
@@ -144,7 +146,7 @@ static int encoder_init(
     // Input type: NV12
     MFCreateMediaType(&inType);
     IMFMediaType_SetGUID(inType, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
-    IMFMediaType_SetGUID(inType, &MF_MT_SUBTYPE, &MFVideoFormat_NV12);
+    IMFMediaType_SetGUID(inType, &MF_MT_SUBTYPE, &MFVideoFormat_IYUV);
     IMFMediaType_SetUINT32(inType, &MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     IMFMediaType_SetUINT64(inType, &MF_MT_FRAME_SIZE,
         ((UINT64)(UINT32)w << 32) | (UINT64)(UINT32)h);
@@ -238,10 +240,11 @@ static int encode_frame(
         }
     }
 
-    nv12_size = w * h + (w * h / 2);
+    // I420: Y (w*h) + U (w/2 * h/2) + V (w/2 * h/2)
+    nv12_size = w * h + (w/2) * (h/2) * 2;
     nv12 = (unsigned char*)malloc(nv12_size);
     if (!nv12) return -1;
-    bgra_to_nv12(bgra, w, h, nv12, nv12 + w * h);
+    bgra_to_i420(bgra, w, h, nv12, nv12 + w*h, nv12 + w*h + (w/2)*(h/2));
 
     inBuf = NULL;
     hr = MFCreateMemoryBuffer((DWORD)nv12_size, &inBuf);
@@ -320,6 +323,22 @@ static int encode_frame(
                     fclose(df3);
                 }
             }
+
+            // 0xC00D6D61 = MF_E_TRANSFORM_STREAM_CHANGE: re-negotiate output type
+            if (hr == (HRESULT)0xC00D6D61) {
+                IMFMediaType *newType = NULL;
+                if (SUCCEEDED(IMFTransform_GetOutputAvailableType(g_encoder, 0, 0, &newType))) {
+                    IMFTransform_SetOutputType(g_encoder, 0, newType, 0);
+                    IMFMediaType_Release(newType);
+                }
+                // retry ProcessOutput on next iteration
+                if (we_own_sample) {
+                    IMFMediaBuffer_Release(outBuf);
+                    IMFSample_Release(outSample);
+                }
+                continue;
+            }
+
             if (we_own_sample) {
                 IMFMediaBuffer_Release(outBuf);
                 IMFSample_Release(outSample);
