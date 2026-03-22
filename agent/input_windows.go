@@ -7,6 +7,9 @@ package main
 
 #include <windows.h>
 
+// Forward declaration
+static void switch_to_active_desktop(void);
+
 // g_use_virtual_desk: set to 1 for multi-monitor, 0 for single monitor.
 // MOUSEEVENTF_VIRTUALDESK can be slow on RDP sessions — avoid when not needed.
 static int g_use_virtual_desk = 0;
@@ -17,6 +20,7 @@ static void set_multi_monitor(int multiMon) {
 
 // send_mouse_move: moves mouse to absolute coordinates (0..65535 range).
 static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
+    switch_to_active_desktop();
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
     inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
@@ -28,6 +32,7 @@ static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
 
 // send_mouse_button: press/release a mouse button (button: 0=left, 1=right, 2=middle).
 static void send_mouse_button(int button, int down, int screen_w, int screen_h, int x, int y) {
+    switch_to_active_desktop();
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
     inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
@@ -55,11 +60,38 @@ static void send_mouse_scroll(int delta) {
 
 // send_key: press or release a virtual key code.
 static void send_key(int vk, int down) {
+    switch_to_active_desktop();
     INPUT inp = {0};
     inp.type = INPUT_KEYBOARD;
     inp.ki.wVk = (WORD)vk;
     if (!down) inp.ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(1, &inp, sizeof(INPUT));
+}
+
+// switch_to_active_desktop: ensures the current thread is attached to the
+// input desktop (either "Default" for normal use or "Winlogon" for the
+// login screen). This allows SendInput to work on the logon screen.
+// Called periodically (not on every input — cached for 2 seconds).
+static HDESK g_currentDesk = NULL;
+static DWORD g_deskCheckTime = 0;
+
+static void switch_to_active_desktop(void) {
+    DWORD now = GetTickCount();
+    if (now - g_deskCheckTime < 2000 && g_currentDesk != NULL) return;
+    g_deskCheckTime = now;
+
+    // Try to open the input desktop (the one receiving user input right now)
+    HDESK inputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (!inputDesk) return;
+
+    // If it's different from our current desktop, switch
+    if (g_currentDesk != inputDesk) {
+        SetThreadDesktop(inputDesk);
+        if (g_currentDesk) CloseDesktop(g_currentDesk);
+        g_currentDesk = inputDesk;
+    } else {
+        CloseDesktop(inputDesk);
+    }
 }
 
 // get_virtual_screen_size: returns the full virtual desktop dimensions.
