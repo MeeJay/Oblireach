@@ -11,7 +11,8 @@ type SessionInfo struct {
 	IsConsole   bool   `json:"isConsole"`
 }
 
-func enumerateSessions() []SessionInfo { return nil }
-func consoleSessionID() int            { return 0 }
-func currentSessionID() int            { return 0 }
-func findCaptureSession() int          { return 0 }
+func enumerateSessions() []SessionInfo         { return nil }
+func consoleSessionID() int                    { return 0 }
+func currentSessionID() int                    { return 0 }
+func findCaptureSession() int                  { return 0 }
+func spawnInSessionGo(sessionID int, cmdLine string) (uint32, int) { return 0, -1 }
