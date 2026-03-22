@@ -10,6 +10,7 @@ package main
 #include <X11/extensions/Xrandr.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static Display *g_dpy      = NULL;
 static Window   g_root     = 0;

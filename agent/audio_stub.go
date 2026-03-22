@@ -2,7 +2,9 @@
 
 package main
 
-func audioInit() error    { return nil }
+var audioInitDone bool
+
+func audioInit() error     { return nil }
 func audioCapture() []byte { return nil }
-func audioClose()         {}
+func audioClose()          {}
 func audioSampleRate() int { return 48000 }

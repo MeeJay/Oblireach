@@ -50,26 +50,7 @@ static int mac_enumerate_monitors(MacMonitorInfo *out, int maxCount) {
     return count;
 }
 
-// Check and request screen recording permission (macOS 10.15+)
-static int mac_check_permission(void) {
-    // CGPreflightScreenCaptureAccess is available since macOS 10.15
-    // We weak-link it to avoid crash on older versions
-    if (__builtin_available(macOS 10.15, *)) {
-        if (!CGPreflightScreenCaptureAccess()) {
-            // Permission not granted — request it (opens System Preferences)
-            CGRequestScreenCaptureAccess();
-            return 0; // not yet granted
-        }
-    }
-    return 1; // granted (or old macOS where no permission is needed)
-}
-
 static int mac_capture_init(int monitor_idx) {
-    if (!mac_check_permission()) {
-        // Permission dialog shown — capture will fail until user grants it
-        // We continue init anyway; captureFrame will return black/error
-    }
-
     MacMonitorInfo mons[MAC_MAX_MONITORS];
     int n = mac_enumerate_monitors(mons, MAC_MAX_MONITORS);
 
@@ -113,15 +94,19 @@ static void mac_get_offset(int *ox, int *oy) {
 }
 
 // mac_capture_frame: captures the display into a BGRA buffer.
-// Uses CGDisplayCreateImage (synchronous, works on all macOS versions).
+// Uses CGWindowListCreateImage (not deprecated, works on all macOS versions).
 static int mac_capture_frame(unsigned char *out_bgra) {
-    if (g_mac_display == 0 || g_mac_width <= 0 || g_mac_height <= 0) return -1;
+    if (g_mac_width <= 0 || g_mac_height <= 0) return -1;
 
-    CGImageRef img = CGDisplayCreateImage(g_mac_display);
+    // Capture the screen region for the target display
+    CGRect captureRect = CGRectMake(g_mac_mon_x, g_mac_mon_y, g_mac_width, g_mac_height);
+    CGImageRef img = CGWindowListCreateImage(
+        captureRect,
+        kCGWindowListOptionOnScreenOnly,
+        kCGNullWindowID,
+        kCGWindowImageDefault
+    );
     if (!img) return -2;
-
-    int imgW = (int)CGImageGetWidth(img);
-    int imgH = (int)CGImageGetHeight(img);
 
     // Create a bitmap context to draw the image into BGRA format
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
@@ -136,7 +121,6 @@ static int mac_capture_frame(unsigned char *out_bgra) {
         return -3;
     }
 
-    // Draw — this handles scaling if display resolution differs from pixel resolution
     CGRect drawRect = CGRectMake(0, 0, g_mac_width, g_mac_height);
     CGContextDrawImage(ctx, drawRect, img);
 
