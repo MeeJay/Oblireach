@@ -146,6 +146,7 @@ var (
 func audioInit() error {
 	rc := int(C.audio_init())
 	if rc != 0 {
+		log.Printf("Audio capture init failed (code %d) — audio streaming disabled", rc)
 		return nil // audio not available — not fatal
 	}
 	audioInitDone = true

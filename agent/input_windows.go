@@ -117,32 +117,45 @@ static int clipboard_set_text(const char *utf8) {
 import "C"
 import "unsafe"
 
-// g_monOffX/Y are set by the stream code when a monitor is selected,
-// so mouse coordinates are offset to the correct monitor.
-var g_monOffX, g_monOffY int
+// Cached virtual screen dimensions — refreshed once when monitor offset changes.
+// Avoids calling GetSystemMetrics on every mouse move (slow on RDP servers).
+var (
+	g_monOffX, g_monOffY int
+	g_vsW, g_vsH         int
+	g_vsOX, g_vsOY       int
+	g_vsInited           bool
+)
+
+func refreshVirtualScreenCache() {
+	var vw, vh, vox, voy C.int
+	C.get_virtual_screen_size(&vw, &vh, &vox, &voy)
+	g_vsW = int(vw)
+	g_vsH = int(vh)
+	g_vsOX = int(vox)
+	g_vsOY = int(voy)
+	g_vsInited = true
+}
 
 func setInputMonitorOffset(x, y int) {
 	g_monOffX = x
 	g_monOffY = y
+	refreshVirtualScreenCache()
 }
 
 func inputMouseMove(x, y int) {
-	var vw, vh, vox, voy C.int
-	C.get_virtual_screen_size(&vw, &vh, &vox, &voy)
-	// x/y are relative to the captured monitor. Add monitor offset to get virtual coords.
-	absX := g_monOffX + x - int(vox)
-	absY := g_monOffY + y - int(voy)
-	C.send_mouse_move(C.int(vw), C.int(vh), C.int(absX), C.int(absY))
+	if !g_vsInited { refreshVirtualScreenCache() }
+	absX := g_monOffX + x - g_vsOX
+	absY := g_monOffY + y - g_vsOY
+	C.send_mouse_move(C.int(g_vsW), C.int(g_vsH), C.int(absX), C.int(absY))
 }
 
 func inputMouseButton(button int, down bool, x, y int) {
-	var vw, vh, vox, voy C.int
-	C.get_virtual_screen_size(&vw, &vh, &vox, &voy)
-	absX := g_monOffX + x - int(vox)
-	absY := g_monOffY + y - int(voy)
+	if !g_vsInited { refreshVirtualScreenCache() }
+	absX := g_monOffX + x - g_vsOX
+	absY := g_monOffY + y - g_vsOY
 	d := C.int(0)
 	if down { d = 1 }
-	C.send_mouse_button(C.int(button), d, C.int(vw), C.int(vh), C.int(absX), C.int(absY))
+	C.send_mouse_button(C.int(button), d, C.int(g_vsW), C.int(g_vsH), C.int(absX), C.int(absY))
 }
 
 func inputMouseScroll(delta int) {

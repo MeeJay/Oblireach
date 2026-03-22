@@ -13,10 +13,57 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
 )
+
+var (
+	chatUser32                  = syscall.NewLazyDLL("user32.dll")
+	chatProcFindWindowW         = chatUser32.NewProc("FindWindowW")
+	chatProcSetWindowLongPtrW   = chatUser32.NewProc("SetWindowLongPtrW")
+	chatProcGetWindowLongPtrW   = chatUser32.NewProc("GetWindowLongPtrW")
+	chatProcSetWindowPos        = chatUser32.NewProc("SetWindowPos")
+	chatProcSetLayeredAttr      = chatUser32.NewProc("SetLayeredWindowAttributes")
+	chatProcSysParamsInfo       = chatUser32.NewProc("SystemParametersInfoW")
+	chatProcGetUILang           = syscall.NewLazyDLL("kernel32.dll").NewProc("GetUserDefaultUILanguage")
+)
+
+type chatWinRECT struct{ Left, Top, Right, Bottom int32 }
+
+func chatIsFrench() bool {
+	ret, _, _ := chatProcGetUILang.Call()
+	return (uint16(ret) & 0x3FF) == 0x0C
+}
+
+func chatMakePopup(title string) {
+	titleW, _ := syscall.UTF16PtrFromString(title)
+	hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
+	if hwnd == 0 { return }
+
+	// Remove titlebar — WS_POPUP | WS_VISIBLE
+	const gwlStyle = ^uintptr(15) // -16
+	const gwlExStyle = ^uintptr(19) // -20
+	chatProcSetWindowLongPtrW.Call(hwnd, gwlStyle, 0x80000000|0x10000000)
+
+	// WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED
+	ex, _, _ := chatProcGetWindowLongPtrW.Call(hwnd, gwlExStyle)
+	chatProcSetWindowLongPtrW.Call(hwnd, gwlExStyle,
+		ex|0x00000008|0x00000080|0x00080000)
+
+	// Transparency 94%
+	chatProcSetLayeredAttr.Call(hwnd, 0, 240, 2) // LWA_ALPHA=2
+
+	// Position bottom-right
+	var wa chatWinRECT
+	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0) // SPI_GETWORKAREA
+	x := int(wa.Right) - 380 - 16
+	y := int(wa.Bottom) - 520 - 16
+	chatProcSetWindowPos.Call(hwnd, ^uintptr(0), // HWND_TOPMOST
+		uintptr(x), uintptr(y), 380, 520, 0x0040) // SWP_SHOWWINDOW
+}
 
 var chatConn net.Conn
 var chatConnMu sync.Mutex
@@ -120,15 +167,39 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 		}
 	}
 
+	// i18n strings
+	fr := chatIsFrench()
+	i18n := map[string]string{
+		"chattingWith":    "Chatting with",
+		"online":          "Online",
+		"yourMessage":     "Your message...",
+		"remoteRequested": "Remote control access requested.",
+		"allow":           "Allow",
+		"deny":            "Deny",
+		"remoteGranted":   "Remote control access granted.",
+		"remoteDenied":    "Remote control access denied.",
+	}
+	if fr {
+		i18n["chattingWith"] = "Discussion avec"
+		i18n["online"] = "En ligne"
+		i18n["yourMessage"] = "Votre message..."
+		i18n["remoteRequested"] = "Demande de prise de contrôle à distance reçue."
+		i18n["allow"] = "Accepter"
+		i18n["deny"] = "Refuser"
+		i18n["remoteGranted"] = "Contrôle à distance autorisé."
+		i18n["remoteDenied"] = "Contrôle à distance refusé."
+	}
+
 	// Build the HTML for the chat window
-	html := buildChatHTML(operatorName, operatorAvatar, userName, userInitials)
+	windowTitle := "Obliance Chat"
+	html := buildChatHTML(operatorName, operatorAvatar, userName, userInitials, i18n)
 
 	// Create WebView2 window
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  "Obliance Chat",
+			Title:  windowTitle,
 			Width:  380,
 			Height: 520,
 			IconId: 0,
@@ -140,6 +211,12 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	}
 	chatWebview = w
 	defer w.Destroy()
+
+	// Make the window borderless, transparent, positioned bottom-right, topmost
+	go func() {
+		time.Sleep(300 * time.Millisecond) // wait for window creation
+		chatMakePopup(windowTitle)
+	}()
 
 	// Bind Go functions callable from JavaScript
 	w.Bind("goSendMessage", func(text string) {
@@ -220,7 +297,7 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	log.Printf("chat-helper: exiting")
 }
 
-func buildChatHTML(operatorName, operatorAvatar, userName, userInitials string) string {
+func buildChatHTML(operatorName, operatorAvatar, userName, userInitials string, i18n map[string]string) string {
 	// Build avatar HTML — use image if available, otherwise initials
 	avatarHTML := `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#7F77DD,#534AB7);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.9)">` + string([]rune(operatorName)[0:1]) + `</span></div>`
 	smallAvatarHTML := avatarHTML
@@ -278,10 +355,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div style="display:flex;align-items:center;gap:10px">
       %s
       <div>
-        <p style="font-size:13px;font-weight:500;color:rgba(255,255,255,0.92)">Obliance Support</p>
+        <p style="font-size:13px;font-weight:500;color:rgba(255,255,255,0.92)">` + i18n["chattingWith"] + ` ` + operatorName + `</p>
         <div style="display:flex;align-items:center;gap:5px">
           <div style="width:6px;height:6px;border-radius:50%%;background:#5DCAA5"></div>
-          <span style="font-size:11px;color:rgba(255,255,255,0.4)">%s</span>
+          <span style="font-size:11px;color:rgba(255,255,255,0.4)">` + i18n["online"] + `</span>
         </div>
       </div>
     </div>
@@ -294,14 +371,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="messages" id="messages"></div>
   <div id="remote-panel" style="display:none;padding:0 12px">
     <div class="remote-panel">
-      <p id="remote-msg">Remote control access requested.</p>
-      <button class="allow" onclick="goAllowRemote();document.getElementById('remote-panel').style.display='none';addSystemMessage('Remote control access granted.')">Allow</button>
-      <button class="deny" onclick="goDenyRemote();document.getElementById('remote-panel').style.display='none';addSystemMessage('Remote control access denied.')">Deny</button>
+      <p id="remote-msg">` + i18n["remoteRequested"] + `</p>
+      <button class="allow" onclick="goAllowRemote();document.getElementById('remote-panel').style.display='none';addSystemMessage('` + i18n["remoteGranted"] + `')">` + i18n["allow"] + `</button>
+      <button class="deny" onclick="goDenyRemote();document.getElementById('remote-panel').style.display='none';addSystemMessage('` + i18n["remoteDenied"] + `')">` + i18n["deny"] + `</button>
     </div>
   </div>
   <div class="input-area">
     <div class="input-row">
-      <input id="input" type="text" placeholder="Votre message..." onkeydown="if(event.key==='Enter')sendMsg()" />
+      <input id="input" type="text" placeholder="` + i18n["yourMessage"] + `" onkeydown="if(event.key==='Enter')sendMsg()" />
       <button class="send-btn" onclick="sendMsg()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -369,5 +446,5 @@ function escHtml(s) {
 }
 </script>
 </body></html>`,
-		avatarHTML, operatorName, smallAvatarHTML, userInitials)
+		avatarHTML, smallAvatarHTML, userInitials)
 }

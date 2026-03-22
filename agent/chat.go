@@ -129,9 +129,6 @@ func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
 		return
 	}
 	cs := v.(*ChatSession)
-	if cs.conn == nil {
-		return
-	}
 
 	msg, _ := json.Marshal(map[string]interface{}{
 		"action":       "operator_message",
@@ -139,7 +136,29 @@ func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
 		"operatorName": operatorName,
 		"timestamp":    timestamp,
 	})
-	chatPipeSend(cs.conn, chatPipeMsg, msg)
+
+	// Try to send — if the pipe is dead (user closed), respawn the helper
+	if cs.conn == nil || chatPipeSend(cs.conn, chatPipeMsg, msg) != nil {
+		log.Printf("Chat %s: helper disconnected, respawning for new message", chatID)
+		// Clean up old session
+		cs.stop()
+		// Respawn — reuse the same chat session params
+		// The caller (push.go) already has the config
+		go func() {
+			if err := startChat(nil, chatID, cs.operatorName, cs.operatorAvatar, cs.sessionID); err != nil {
+				log.Printf("Chat %s: respawn failed: %v", chatID, err)
+				return
+			}
+			// Wait for helper to connect, then send the pending message
+			time.Sleep(2 * time.Second)
+			if v2, ok := activeChats.Load(chatID); ok {
+				cs2 := v2.(*ChatSession)
+				if cs2.conn != nil {
+					chatPipeSend(cs2.conn, chatPipeMsg, msg)
+				}
+			}
+		}()
+	}
 }
 
 func forwardChatFile(chatID string, payload map[string]interface{}) {
