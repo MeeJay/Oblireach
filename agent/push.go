@@ -164,7 +164,8 @@ func handleCommand(cfg *Config, cmd *command) {
 			log.Printf("Command %s: missing chatId", cmd.ID)
 			return
 		}
-		if err := startChat(cfg, chatID, operatorName, sessionID); err != nil {
+		operatorAvatar := payloadString(cmd.Payload, "operatorAvatar")
+		if err := startChat(cfg, chatID, operatorName, operatorAvatar, sessionID); err != nil {
 			log.Printf("Command %s: startChat failed: %v", cmd.ID, err)
 		}
 

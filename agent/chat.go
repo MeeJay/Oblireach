@@ -18,17 +18,19 @@ const (
 	chatPipeMsg   = byte(0x10) // bidirectional: JSON chat message
 	chatPipeStop  = byte(0x11) // service → helper: close chat
 	chatPipeEvent = byte(0x12) // helper → service: user events
+	chatPipeInit  = byte(0x13) // service → helper: init with avatar data
 )
 
 // ── ChatSession ──────────────────────────────────────────────────────────────
 
 type ChatSession struct {
-	chatID       string
-	operatorName string
-	sessionID    int
-	conn         net.Conn
-	stopCh       chan struct{}
-	once         sync.Once
+	chatID         string
+	operatorName   string
+	operatorAvatar string // data URI (base64)
+	sessionID      int
+	conn           net.Conn
+	stopCh         chan struct{}
+	once           sync.Once
 }
 
 var activeChats sync.Map // chatID → *ChatSession
@@ -45,7 +47,7 @@ func (cs *ChatSession) stop() {
 }
 
 // startChat spawns a chat helper in the target session and sets up the pipe relay.
-func startChat(cfg *Config, chatID, operatorName string, sessionID int) error {
+func startChat(cfg *Config, chatID, operatorName, operatorAvatar string, sessionID int) error {
 	if sessionID < 0 {
 		sessionID = findCaptureSession()
 	}
@@ -74,10 +76,11 @@ func startChat(cfg *Config, chatID, operatorName string, sessionID int) error {
 	log.Printf("Chat %s: spawned helper PID %d in session %d", chatID, pid, sessionID)
 
 	cs := &ChatSession{
-		chatID:       chatID,
-		operatorName: operatorName,
-		sessionID:    sessionID,
-		stopCh:       make(chan struct{}),
+		chatID:         chatID,
+		operatorName:   operatorName,
+		operatorAvatar: operatorAvatar,
+		sessionID:      sessionID,
+		stopCh:         make(chan struct{}),
 	}
 	activeChats.Store(chatID, cs)
 
@@ -94,6 +97,13 @@ func startChat(cfg *Config, chatID, operatorName string, sessionID int) error {
 		}
 		cs.conn = conn
 		log.Printf("Chat %s: helper connected", chatID)
+
+		// Send init data (including avatar) to helper
+		initData, _ := json.Marshal(map[string]string{
+			"operatorName":   cs.operatorName,
+			"operatorAvatar": cs.operatorAvatar,
+		})
+		chatPipeSend(conn, chatPipeInit, initData)
 
 		// Read events from helper and forward to command WS
 		cs.relayFromHelper()

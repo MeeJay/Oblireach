@@ -125,6 +125,31 @@ static void chat_slide_restore(void) {
 
 // ── Painting ─────────────────────────────────────────────────────────────────
 
+// Draw a filled rounded rectangle
+static void fillRoundRect(HDC hdc, int x, int y, int w, int h, int r, COLORREF color) {
+    HBRUSH br = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HBRUSH oldBr = (HBRUSH)SelectObject(hdc, br);
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+    RoundRect(hdc, x, y, x + w, y + h, r, r);
+    SelectObject(hdc, oldBr);
+    SelectObject(hdc, oldPen);
+    DeleteObject(br);
+    DeleteObject(pen);
+}
+
+// Draw a circle with an initial letter
+static void drawAvatarCircle(HDC hdc, int cx, int cy, int radius, COLORREF bgColor,
+                              wchar_t initial, HFONT font) {
+    fillRoundRect(hdc, cx - radius, cy - radius, radius * 2, radius * 2, radius * 2, bgColor);
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, font);
+    SetTextColor(hdc, RGB(255, 255, 255));
+    RECT rc = {cx - radius, cy - radius, cx + radius, cy + radius};
+    wchar_t buf[2] = {initial, 0};
+    DrawTextW(hdc, buf, 1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
 static void paint_chat(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -135,108 +160,128 @@ static void paint_chat(HWND hwnd) {
     HBITMAP bmp = CreateCompatibleBitmap(hdc, cr.right, cr.bottom);
     HBITMAP old = (HBITMAP)SelectObject(mem, bmp);
 
-    // Background
+    // Background gradient (solid for simplicity — deep navy purple)
     HBRUSH bgBr = CreateSolidBrush(CLR_BG);
     FillRect(mem, &cr, bgBr);
     DeleteObject(bgBr);
 
-    // Left accent bar (indigo, like the toast)
-    RECT acRc = {0, 0, 4, cr.bottom};
-    HBRUSH acBr = CreateSolidBrush(CLR_ACCENT);
-    FillRect(mem, &acRc, acBr);
-    DeleteObject(acBr);
-
-    // Title bar
-    RECT tbr = {4, 0, cr.right, TITLEBAR_H};
-    HBRUSH tbBr = CreateSolidBrush(CLR_TITLEBAR);
+    // Title bar area
+    RECT tbr = {0, 0, cr.right, TITLEBAR_H};
+    HBRUSH tbBr = CreateSolidBrush(CLR_BG);
     FillRect(mem, &tbr, tbBr);
     DeleteObject(tbBr);
 
-    // Accent line under title bar
-    RECT acLine = {4, TITLEBAR_H - 2, cr.right, TITLEBAR_H};
-    HBRUSH acLineBr = CreateSolidBrush(CLR_ACCENT);
-    FillRect(mem, &acLine, acLineBr);
-    DeleteObject(acLineBr);
-
     SetBkMode(mem, TRANSPARENT);
-    SelectObject(mem, g_fontTitle);
-    SetTextColor(mem, CLR_ACCENT);
-    RECT titleRc = {16, 8, cr.right - 30, TITLEBAR_H};
-    wchar_t titleBuf[128];
-    _snwprintf(titleBuf, 128, L"Obliance Chat");
-    DrawTextW(mem, titleBuf, -1, &titleRc, DT_LEFT | DT_SINGLELINE);
 
-    // Operator name (smaller, dimmer)
+    // Operator avatar circle (left side of title)
+    drawAvatarCircle(mem, 24, TITLEBAR_H / 2, 14, CLR_ACCENT,
+                     g_opName[0] ? g_opName[0] : L'O', g_fontSmall);
+
+    // Title: "Obliance Support"
+    SelectObject(mem, g_fontTitle);
+    SetTextColor(mem, CLR_TEXT);
+    RECT titleRc = {46, 6, cr.right - 30, 20};
+    DrawTextW(mem, L"Obliance Support", -1, &titleRc, DT_LEFT | DT_SINGLELINE);
+
+    // Subtitle: operator name + status dot
     SelectObject(mem, g_fontSmall);
+    SetTextColor(mem, RGB(74, 222, 128)); // green
+    RECT dotRc = {46, 22, 54, 32};
+    DrawTextW(mem, L"\x2022", -1, &dotRc, DT_LEFT | DT_SINGLELINE); // bullet
     SetTextColor(mem, CLR_TEXT_DIM);
-    RECT opRc = {16, 22, cr.right - 30, TITLEBAR_H};
-    DrawTextW(mem, g_opName, -1, &opRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT subRc = {54, 22, cr.right - 30, TITLEBAR_H};
+    DrawTextW(mem, g_opName, -1, &subRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     // Close button
     SelectObject(mem, g_fontTitle);
-    SetTextColor(mem, RGB(239, 68, 68));
+    SetTextColor(mem, CLR_TEXT_DIM);
     RECT closRc = {cr.right - 28, 8, cr.right - 4, TITLEBAR_H};
     DrawTextW(mem, L"\x2715", -1, &closRc, DT_CENTER | DT_SINGLELINE);
+
+    // Thin separator line
+    RECT sepLine = {0, TITLEBAR_H - 1, cr.right, TITLEBAR_H};
+    HBRUSH sepBr = CreateSolidBrush(RGB(255, 255, 255));
+    // Use 10% white
+    HBRUSH sep10 = CreateSolidBrush(RGB(30, 28, 60));
+    FillRect(mem, &sepLine, sep10);
+    DeleteObject(sep10);
+    DeleteObject(sepBr);
 
     // Messages area
     int msgTop = TITLEBAR_H + 4;
     int msgBot = cr.bottom - INPUT_H - (g_showRemote ? REMOTE_PANEL_H : 0);
     int y = msgBot - 8;
+    int avatarR = 12; // avatar radius
+    int bubblePad = 10;
+    int bubbleRadius = 16;
 
-    SelectObject(mem, g_fontMsg);
     int i;
     for (i = g_msgCount - 1; i >= 0 && y > msgTop; i--) {
         ChatMsg *m = &g_msgs[i];
 
         // Measure text
-        RECT mrc = {0, 0, cr.right - 40, 0};
+        SelectObject(mem, g_fontMsg);
+        int maxBubbleW = cr.right - 80;
+        RECT mrc = {0, 0, maxBubbleW - bubblePad * 2, 0};
         DrawTextW(mem, m->text, -1, &mrc, DT_CALCRECT | DT_WORDBREAK);
         int textH = mrc.bottom;
-        int bubbleH = textH + 24; // 12 sender line + 12 padding
+        int bubbleH = textH + bubblePad * 2;
+        int bubbleW = mrc.right + bubblePad * 2;
+        if (bubbleW < 60) bubbleW = 60;
 
         y -= bubbleH;
         if (y + bubbleH < msgTop) break;
 
-        // Bubble
-        int bLeft = m->isOperator ? 8 : 60;
-        int bRight = m->isOperator ? cr.right - 60 : cr.right - 8;
-        RECT bubble = {bLeft, y, bRight, y + bubbleH};
-        HBRUSH bubBr = CreateSolidBrush(m->isOperator ? CLR_OP_BUBBLE : CLR_USER_BUBBLE);
-        FillRect(mem, &bubble, bubBr);
-        DeleteObject(bubBr);
+        if (m->isOperator) {
+            // Operator: bubble on left + avatar
+            int avX = 8 + avatarR;
+            int avY = y + bubbleH - avatarR;
+            drawAvatarCircle(mem, avX, avY, avatarR, CLR_ACCENT,
+                             g_opName[0] ? g_opName[0] : L'O', g_fontSmall);
 
-        // Sender name
-        SelectObject(mem, g_fontSmall);
-        SetTextColor(mem, CLR_ACCENT);
-        RECT snRc = {bLeft + 8, y + 4, bRight - 8, y + 16};
-        DrawTextW(mem, m->sender, -1, &snRc, DT_LEFT | DT_SINGLELINE);
+            int bx = 8 + avatarR * 2 + 6;
+            fillRoundRect(mem, bx, y, bubbleW, bubbleH, bubbleRadius, CLR_OP_BUBBLE);
 
-        // Message text
-        SelectObject(mem, g_fontMsg);
-        SetTextColor(mem, CLR_TEXT);
-        RECT txRc = {bLeft + 8, y + 18, bRight - 8, y + bubbleH - 4};
-        DrawTextW(mem, m->text, -1, &txRc, DT_LEFT | DT_WORDBREAK);
+            SetTextColor(mem, CLR_TEXT);
+            RECT txRc = {bx + bubblePad, y + bubblePad,
+                         bx + bubbleW - bubblePad, y + bubbleH - bubblePad};
+            DrawTextW(mem, m->text, -1, &txRc, DT_LEFT | DT_WORDBREAK);
+        } else {
+            // User: bubble on right + initials circle
+            int bx = cr.right - 8 - avatarR * 2 - 6 - bubbleW;
+            fillRoundRect(mem, bx, y, bubbleW, bubbleH, bubbleRadius, CLR_USER_BUBBLE);
 
-        y -= 4; // gap
+            int avX = cr.right - 8 - avatarR;
+            int avY = y + bubbleH - avatarR;
+            drawAvatarCircle(mem, avX, avY, avatarR, RGB(67, 56, 202),
+                             m->sender[0] ? m->sender[0] : L'U', g_fontSmall);
+
+            SetTextColor(mem, CLR_TEXT);
+            RECT txRc = {bx + bubblePad, y + bubblePad,
+                         bx + bubbleW - bubblePad, y + bubbleH - bubblePad};
+            DrawTextW(mem, m->text, -1, &txRc, DT_LEFT | DT_WORDBREAK);
+        }
+
+        y -= 6; // gap between messages
     }
 
     // Remote access panel
     if (g_showRemote) {
         int panelTop = cr.bottom - INPUT_H - REMOTE_PANEL_H;
-        RECT prr = {0, panelTop, cr.right, panelTop + REMOTE_PANEL_H};
-        HBRUSH prBr = CreateSolidBrush(RGB(30, 58, 138));
-        FillRect(mem, &prr, prBr);
-        DeleteObject(prBr);
+        fillRoundRect(mem, 8, panelTop, cr.right - 16, REMOTE_PANEL_H, 12, RGB(30, 58, 138));
 
         SelectObject(mem, g_fontSmall);
         SetTextColor(mem, CLR_TEXT);
-        RECT pmRc = {12, panelTop + 4, cr.right - 12, panelTop + REMOTE_PANEL_H - 28};
+        RECT pmRc = {16, panelTop + 4, cr.right - 16, panelTop + REMOTE_PANEL_H - 28};
         if (wcslen(g_remoteMsg) > 0) {
             DrawTextW(mem, g_remoteMsg, -1, &pmRc, DT_LEFT | DT_WORDBREAK);
         } else {
             DrawTextW(mem, L"Remote control access requested.", -1, &pmRc, DT_LEFT | DT_WORDBREAK);
         }
     }
+
+    // Input area background
+    fillRoundRect(mem, 8, cr.bottom - INPUT_H + 4, cr.right - 16, INPUT_H - 8, 20, CLR_INPUT_BG);
 
     BitBlt(hdc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, old);
@@ -607,6 +652,26 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	chatConn = conn
 	chatConnMu.Unlock()
 	defer conn.Close()
+
+	// Wait for init message with avatar data
+	initType, initPayload, err := chatPipeRecv(conn)
+	if err != nil || initType != chatPipeInit {
+		log.Printf("chat-helper: expected init, got type=%d err=%v", initType, err)
+	} else {
+		var initData struct {
+			OperatorName   string `json:"operatorName"`
+			OperatorAvatar string `json:"operatorAvatar"`
+		}
+		if json.Unmarshal(initPayload, &initData) == nil {
+			if initData.OperatorName != "" {
+				operatorName = initData.OperatorName
+			}
+			// TODO: decode avatar data URI → HBITMAP for GDI painting
+			// For now we just use the name
+			log.Printf("chat-helper: init received, operator=%s avatar=%d bytes",
+				operatorName, len(initData.OperatorAvatar))
+		}
+	}
 
 	// Create the Win32 window
 	opNameW, _ := syscall.UTF16FromString(operatorName)
