@@ -203,6 +203,12 @@ func (s *StreamSession) run() {
 	// ── Initialize capture ────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
 		log.Printf("Stream %s: captureInit failed: %v", s.token, err)
+		// Notify browser with a clear error message
+		errMsg, _ := json.Marshal(map[string]string{
+			"type":    "error",
+			"message": "Screen capture unavailable: " + err.Error(),
+		})
+		_ = s.ws.WriteFrame(0x1, errMsg)
 		return
 	}
 	defer captureClose()
