@@ -9,11 +9,10 @@ package main
 #include <stdlib.h>
 #include <string.h>
 
-#define WM_W 400
-#define WM_H 28
+#define WM_REC_W 90
+#define WM_REC_H 28
 
 static HWND g_watermark = NULL;
-static wchar_t g_wm_text[256] = L"";
 static HFONT g_wm_font = NULL;
 
 static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -21,26 +20,46 @@ static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+
+        // Background: dark semi-transparent rounded pill
+        HBRUSH bgBr = CreateSolidBrush(RGB(20, 20, 30));
+        HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(20, 20, 30));
+        SelectObject(hdc, bgBr);
+        SelectObject(hdc, bgPen);
+        RoundRect(hdc, 0, 0, WM_REC_W, WM_REC_H, 14, 14);
+        DeleteObject(bgBr);
+        DeleteObject(bgPen);
+
+        // Red dot (recording indicator)
+        HBRUSH redBr = CreateSolidBrush(RGB(239, 68, 68));
+        HPEN redPen = CreatePen(PS_SOLID, 1, RGB(239, 68, 68));
+        SelectObject(hdc, redBr);
+        SelectObject(hdc, redPen);
+        Ellipse(hdc, 10, 8, 22, 20);
+        DeleteObject(redBr);
+        DeleteObject(redPen);
+
+        // "REC" text
         SetBkMode(hdc, TRANSPARENT);
         if (!g_wm_font)
-            g_wm_font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+            g_wm_font = CreateFontW(-12, 0, 0, 0, FW_BOLD, 0, 0, 0,
                 DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SelectObject(hdc, g_wm_font);
-        SetTextColor(hdc, RGB(255, 255, 255));
-        RECT rc = {8, 4, WM_W - 8, WM_H - 4};
-        DrawTextW(hdc, g_wm_text, -1, &rc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SetTextColor(hdc, RGB(239, 68, 68));
+        RECT rc = {26, 5, WM_REC_W - 4, WM_REC_H - 4};
+        DrawTextW(hdc, L"REC", -1, &rc, DT_LEFT | DT_SINGLELINE);
+
         EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_NCHITTEST:
-        return HTTRANSPARENT; // click-through
+        return HTTRANSPARENT;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-static void show_watermark(const wchar_t *text) {
-    if (g_watermark) return; // already showing
-    wcsncpy(g_wm_text, text, 255);
+static void show_watermark_rec(void) {
+    if (g_watermark) return;
 
     WNDCLASSEXW wc;
     ZeroMemory(&wc, sizeof(wc));
@@ -48,28 +67,27 @@ static void show_watermark(const wchar_t *text) {
     wc.lpfnWndProc = wmWndProc;
     wc.hInstance = GetModuleHandleW(NULL);
     wc.hbrBackground = NULL;
-    wc.lpszClassName = L"ObliReachWatermark";
+    wc.lpszClassName = L"ObliReachRec";
     RegisterClassExW(&wc);
 
     RECT wa;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    int x = wa.left + 8;
-    int y = wa.top + 4;
+    int x = wa.right - WM_REC_W - 12;
+    int y = wa.top + 8;
 
     g_watermark = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
-        L"ObliReachWatermark", NULL,
+        L"ObliReachRec", NULL,
         WS_POPUP | WS_VISIBLE,
-        x, y, WM_W, WM_H,
+        x, y, WM_REC_W, WM_REC_H,
         NULL, NULL, wc.hInstance, NULL);
 
     if (g_watermark) {
-        // Semi-transparent black background
-        SetLayeredWindowAttributes(g_watermark, 0, 140, LWA_ALPHA);
+        SetLayeredWindowAttributes(g_watermark, 0, 200, LWA_ALPHA);
     }
 }
 
-static void hide_watermark(void) {
+static void hide_watermark_rec(void) {
     if (g_watermark) {
         DestroyWindow(g_watermark);
         g_watermark = NULL;
@@ -81,19 +99,11 @@ static void hide_watermark(void) {
 }
 */
 import "C"
-import (
-	"fmt"
-	"syscall"
-	"time"
-	"unsafe"
-)
 
 func showWatermark(operatorName string) {
-	text := fmt.Sprintf("Remote session by %s — %s", operatorName, time.Now().Format("15:04"))
-	textW, _ := syscall.UTF16FromString(text)
-	C.show_watermark((*C.wchar_t)(unsafe.Pointer(&textW[0])))
+	C.show_watermark_rec()
 }
 
 func hideWatermark() {
-	C.hide_watermark()
+	C.hide_watermark_rec()
 }

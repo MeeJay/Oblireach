@@ -263,6 +263,8 @@ func (s *StreamSession) run() {
 	}
 
 	log.Printf("Stream %s: started %dx%d@%dfps", s.token, width, height, fps)
+	showWatermark("Remote session active")
+	defer hideWatermark()
 
 	// ── Keepalive ─────────────────────────────────────────────────────────────
 	go func() {

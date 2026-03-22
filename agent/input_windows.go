@@ -7,11 +7,20 @@ package main
 
 #include <windows.h>
 
-// send_mouse_move: moves mouse to absolute virtual-desktop coordinates (0..65535 range).
+// g_use_virtual_desk: set to 1 for multi-monitor, 0 for single monitor.
+// MOUSEEVENTF_VIRTUALDESK can be slow on RDP sessions — avoid when not needed.
+static int g_use_virtual_desk = 0;
+
+static void set_multi_monitor(int multiMon) {
+    g_use_virtual_desk = multiMon;
+}
+
+// send_mouse_move: moves mouse to absolute coordinates (0..65535 range).
 static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
-    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    if (g_use_virtual_desk) inp.mi.dwFlags |= MOUSEEVENTF_VIRTUALDESK;
     inp.mi.dx = (LONG)(x * 65535 / (screen_w > 1 ? screen_w - 1 : 1));
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
     SendInput(1, &inp, sizeof(INPUT));
@@ -21,7 +30,8 @@ static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
 static void send_mouse_button(int button, int down, int screen_w, int screen_h, int x, int y) {
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
-    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    if (g_use_virtual_desk) inp.mi.dwFlags |= MOUSEEVENTF_VIRTUALDESK;
     inp.mi.dx = (LONG)(x * 65535 / (screen_w > 1 ? screen_w - 1 : 1));
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
 
@@ -134,6 +144,17 @@ func refreshVirtualScreenCache() {
 	g_vsOX = int(vox)
 	g_vsOY = int(voy)
 	g_vsInited = true
+
+	// Detect multi-monitor: if virtual screen origin is non-zero or
+	// virtual screen is larger than primary, we have multiple monitors.
+	primaryW := int(C.GetSystemMetrics(0))  // SM_CXSCREEN
+	primaryH := int(C.GetSystemMetrics(1))  // SM_CYSCREEN
+	multiMon := g_vsW > primaryW || g_vsH > primaryH || g_vsOX != 0 || g_vsOY != 0
+	if multiMon {
+		C.set_multi_monitor(1)
+	} else {
+		C.set_multi_monitor(0)
+	}
 }
 
 func setInputMonitorOffset(x, y int) {

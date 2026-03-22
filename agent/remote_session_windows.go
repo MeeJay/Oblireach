@@ -46,8 +46,7 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 
 	// Always use SYSTEM token (LocalSystem from our service process) and
 	// relocate it to the target session. This ensures the helper runs with
-	// high integrity, bypassing UIPI so SendInput works even when the user
-	// has elevated (admin) windows in the foreground.
+	// high integrity, bypassing UIPI so SendInput works on admin windows.
 	{
 		HANDLE hSysToken = NULL;
 		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hSysToken)) {
@@ -66,8 +65,7 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 		}
 	}
 
-	// Build environment from the user's token (for TEMP, APPDATA, etc.)
-	// but fall back to the SYSTEM token if no user is logged in.
+	// Build environment from the user's token for TEMP/APPDATA paths
 	LPVOID pEnv = NULL;
 	{
 		HANDLE hUserToken = NULL;
@@ -295,6 +293,10 @@ func runHelperMode(addr string) {
 		log.Fatalf("helper: send init failed: %v", err)
 	}
 	log.Printf("helper: streaming %dx%d@%dfps", w, h, fps)
+
+	// Show a persistent indicator that a remote session is active
+	showWatermark("Remote session active")
+	defer hideWatermark()
 
 	stopCh := make(chan struct{})
 	inputCh := make(chan []byte, 64)

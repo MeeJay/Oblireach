@@ -38,14 +38,20 @@ func chatIsFrench() bool {
 	return (uint16(ret) & 0x3FF) == 0x0C
 }
 
+var (
+	chatProcCreateRoundRgn = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateRoundRectRgn")
+	chatProcSetWindowRgn   = chatUser32.NewProc("SetWindowRgn")
+)
+
 func chatMakePopup(title string) {
 	titleW, _ := syscall.UTF16PtrFromString(title)
 	hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
 	if hwnd == 0 { return }
 
+	const gwlStyle = ^uintptr(15)   // GWL_STYLE = -16
+	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE = -20
+
 	// Remove titlebar — WS_POPUP | WS_VISIBLE
-	const gwlStyle = ^uintptr(15) // -16
-	const gwlExStyle = ^uintptr(19) // -20
 	chatProcSetWindowLongPtrW.Call(hwnd, gwlStyle, 0x80000000|0x10000000)
 
 	// WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED
@@ -54,15 +60,21 @@ func chatMakePopup(title string) {
 		ex|0x00000008|0x00000080|0x00080000)
 
 	// Transparency 94%
-	chatProcSetLayeredAttr.Call(hwnd, 0, 240, 2) // LWA_ALPHA=2
+	chatProcSetLayeredAttr.Call(hwnd, 0, 240, 2)
+
+	// Rounded corners via region clipping (18px radius)
+	rgn, _, _ := chatProcCreateRoundRgn.Call(0, 0, 380, 520, 18, 18)
+	if rgn != 0 {
+		chatProcSetWindowRgn.Call(hwnd, rgn, 1) // bRedraw=TRUE
+	}
 
 	// Position bottom-right
 	var wa chatWinRECT
-	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0) // SPI_GETWORKAREA
+	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
 	x := int(wa.Right) - 380 - 16
 	y := int(wa.Bottom) - 520 - 16
-	chatProcSetWindowPos.Call(hwnd, ^uintptr(0), // HWND_TOPMOST
-		uintptr(x), uintptr(y), 380, 520, 0x0040) // SWP_SHOWWINDOW
+	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
+		uintptr(x), uintptr(y), 380, 520, 0x0040)
 }
 
 var chatConn net.Conn
@@ -212,9 +224,10 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	chatWebview = w
 	defer w.Destroy()
 
-	// Make the window borderless, transparent, positioned bottom-right, topmost
+	// Make the window borderless, positioned bottom-right, topmost
+	// We need a slight delay for the window to be created
 	go func() {
-		time.Sleep(300 * time.Millisecond) // wait for window creation
+		time.Sleep(500 * time.Millisecond)
 		chatMakePopup(windowTitle)
 	}()
 
@@ -228,6 +241,34 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 		w.Dispatch(func() {
 			w.Eval(fmt.Sprintf(`addMessage('%s', '%s', false)`, jsText, userInitials))
 		})
+	})
+	w.Bind("goMinimizeChat", func() {
+		// Minimize the window to a small tab on the right edge
+		go func() {
+			titleW, _ := syscall.UTF16PtrFromString(windowTitle)
+			hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
+			if hwnd == 0 { return }
+			var wa chatWinRECT
+			chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
+			// Slide to right edge — only 40px visible
+			x := int(wa.Right) - 40
+			y := int(wa.Bottom) - 520 - 16
+			chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
+				uintptr(x), uintptr(y), 380, 520, 0x0040)
+		}()
+	})
+	w.Bind("goRestoreChat", func() {
+		go func() {
+			titleW, _ := syscall.UTF16PtrFromString(windowTitle)
+			hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
+			if hwnd == 0 { return }
+			var wa chatWinRECT
+			chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
+			x := int(wa.Right) - 380 - 16
+			y := int(wa.Bottom) - 520 - 16
+			chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
+				uintptr(x), uintptr(y), 380, 520, 0x0040)
+		}()
 	})
 	w.Bind("goCloseChat", func() {
 		goChatSend("user_closed", "")
@@ -310,7 +351,7 @@ func buildChatHTML(operatorName, operatorAvatar, userName, userInitials string, 
 <html><head><meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:transparent;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#12102a;overflow:hidden;height:100vh;display:flex;flex-direction:column;margin:0}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-thumb{background:rgba(127,119,221,0.3);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -362,8 +403,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         </div>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button onclick="goCloseChat()">
+    <div style="display:flex;gap:4px">
+      <button onclick="minimizeChat()" title="Minimize">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 12h16" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+      <button onclick="goCloseChat()" title="Close">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
     </div>
@@ -440,6 +484,27 @@ function playSound() {
     osc.stop(ctx.currentTime + 0.3);
   } catch(e) {}
 }
+
+let isMinimized = false;
+function minimizeChat() {
+  if (isMinimized) {
+    goRestoreChat();
+    isMinimized = false;
+    document.querySelector('.chat-container').style.opacity = '1';
+  } else {
+    goMinimizeChat();
+    isMinimized = true;
+    document.querySelector('.chat-container').style.opacity = '0.7';
+  }
+}
+// Click anywhere on the window when minimized to restore
+document.addEventListener('click', function(e) {
+  if (isMinimized && !e.target.closest('button')) {
+    goRestoreChat();
+    isMinimized = false;
+    document.querySelector('.chat-container').style.opacity = '1';
+  }
+});
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
