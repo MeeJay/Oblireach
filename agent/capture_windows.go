@@ -79,6 +79,58 @@ static void capture_get_monitor_offset(int *ox, int *oy) {
     *oy = g_mon_y;
 }
 
+// ── Cursor overlay ───────────────────────────────────────────────────────────
+
+static void overlay_cursor_gdi(unsigned char *bgra, int w, int h, int mon_x, int mon_y) {
+    CURSORINFO ci;
+    ci.cbSize = sizeof(ci);
+    if (!GetCursorInfo(&ci)) return;
+    if (!(ci.flags & CURSOR_SHOWING)) return;
+
+    int cx = ci.ptScreenPos.x - mon_x;
+    int cy = ci.ptScreenPos.y - mon_y;
+    if (cx < -32 || cx > w + 32 || cy < -32 || cy > h + 32) return;
+
+    ICONINFO ii;
+    if (!GetIconInfo(ci.hCursor, &ii)) return;
+
+    int hotX = (int)ii.xHotspot;
+    int hotY = (int)ii.yHotspot;
+    int drawX = cx - hotX;
+    int drawY = cy - hotY;
+
+    // Draw cursor onto a temporary DC, then alpha-blend into the BGRA buffer
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, w, h);
+    HBITMAP old = (HBITMAP)SelectObject(hdcMem, hbm);
+
+    // Copy existing frame into the DC
+    BITMAPINFO bmi;
+    ZeroMemory(&bmi, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    SetDIBitsToDevice(hdcMem, 0, 0, w, h, 0, 0, 0, h, bgra, &bmi, DIB_RGB_COLORS);
+
+    // Draw the cursor
+    DrawIconEx(hdcMem, drawX, drawY, ci.hCursor, 0, 0, 0, NULL, DI_NORMAL);
+
+    // Read back
+    GetDIBits(hdcMem, hbm, 0, h, bgra, &bmi, DIB_RGB_COLORS);
+
+    SelectObject(hdcMem, old);
+    DeleteObject(hbm);
+    DeleteDC(hdcMem);
+    ReleaseDC(NULL, hdcScreen);
+
+    if (ii.hbmMask) DeleteObject(ii.hbmMask);
+    if (ii.hbmColor) DeleteObject(ii.hbmColor);
+}
+
 // ── DXGI helpers ──────────────────────────────────────────────────────────────
 
 static void dxgi_close(void) {
@@ -254,7 +306,9 @@ static int capture_frame(unsigned char *out_bgra) {
         bmi.bmiHeader.biCompression = BI_RGB;
 
         int lines = GetDIBits(g_hdcMem, g_hBitmap, 0, (UINT)g_height, out_bgra, &bmi, DIB_RGB_COLORS);
-        return (lines > 0) ? 0 : -1;
+        if (lines <= 0) return -1;
+        overlay_cursor_gdi(out_bgra, g_width, g_height, g_mon_x, g_mon_y);
+        return 0;
     }
 
     // ── DXGI path (original) ─────────────────────────────────────────────────
@@ -299,6 +353,10 @@ static int capture_frame(unsigned char *out_bgra) {
     }
 
     ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource*)g_staging, 0);
+
+    // Overlay the mouse cursor onto the captured frame
+    overlay_cursor_gdi(out_bgra, g_width, g_height, g_mon_x, g_mon_y);
+
     return 0;
 }
 

@@ -21,7 +21,8 @@ const (
 	frameTypeH264 = byte(0x02)
 	frameTypeVP9  = byte(0x03)
 	frameTypeH265 = byte(0x04)
-	frameTypeAV1  = byte(0x05)
+	frameTypeAV1   = byte(0x05)
+	frameTypeAudio = byte(0x06)
 )
 
 // encodeJPEG converts BGRA pixel data to JPEG bytes (pure Go, no CGo).
@@ -245,12 +246,14 @@ func (s *StreamSession) run() {
 
 	// ── Send init message ─────────────────────────────────────────────────────
 	initMsg := map[string]interface{}{
-		"type":     "init",
-		"width":    width,
-		"height":   height,
-		"fps":      fps,
-		"codec":    "h264",
-		"monitors": enumerateMonitors(),
+		"type":       "init",
+		"width":      width,
+		"height":     height,
+		"fps":        fps,
+		"codec":      "h264",
+		"monitors":   enumerateMonitors(),
+		"audioRate":  audioSampleRate(),
+		"audioAvail": audioInitDone,
 	}
 
 	initJSON, _ := json.Marshal(initMsg)
@@ -277,6 +280,30 @@ func (s *StreamSession) run() {
 			}
 		}
 	}()
+
+	// ── Audio capture ────────────────────────────────────────────────────────
+	audioInit()
+	defer audioClose()
+	if audioInitDone {
+		go func() {
+			ticker := time.NewTicker(20 * time.Millisecond) // 50 fps audio chunks
+			defer ticker.Stop()
+			for {
+				select {
+				case <-s.stopCh:
+					return
+				case <-ticker.C:
+					data := audioCapture()
+					if len(data) > 0 {
+						frame := make([]byte, 1+len(data))
+						frame[0] = frameTypeAudio
+						copy(frame[1:], data)
+						_ = s.ws.WriteFrame(0x2, frame)
+					}
+				}
+			}
+		}()
+	}
 
 	// ── Input handler (browser → agent) ──────────────────────────────────────
 	inputCh := make(chan []byte, 64)
@@ -314,6 +341,19 @@ func (s *StreamSession) run() {
 						confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": peek.Block})
 						_ = s.ws.WriteFrame(0x1, confirm)
 						continue
+					case "clipboard_set":
+						// Browser → agent: set clipboard content
+						var clipMsg struct{ Text string `json:"text"` }
+						if json.Unmarshal(payload, &clipMsg) == nil {
+							clipboardSet(clipMsg.Text)
+						}
+						continue
+					case "clipboard_get":
+						// Browser requests clipboard content
+						text := clipboardGet()
+						clipResp, _ := json.Marshal(map[string]string{"type": "clipboard_content", "text": text})
+						_ = s.ws.WriteFrame(0x1, clipResp)
+						continue
 					}
 				}
 				select { case inputCh <- payload: default: }
@@ -334,6 +374,27 @@ func (s *StreamSession) run() {
 	useH265 := false
 	useAV1 := false
 	ab := newAdaptiveBitrate(fps)
+
+	// Inactivity timeout: disconnect after 10 minutes without any input
+	const inactivityTimeout = 10 * time.Minute
+	const inactivityWarning = 30 * time.Second
+	idleTimer := time.NewTimer(inactivityTimeout)
+	defer idleTimer.Stop()
+	warningTimer := time.NewTimer(inactivityTimeout - inactivityWarning)
+	defer warningTimer.Stop()
+	warningSent := false
+
+	resetIdleTimer := func() {
+		if !idleTimer.Stop() {
+			select { case <-idleTimer.C: default: }
+		}
+		idleTimer.Reset(inactivityTimeout)
+		if !warningTimer.Stop() {
+			select { case <-warningTimer.C: default: }
+		}
+		warningTimer.Reset(inactivityTimeout - inactivityWarning)
+		warningSent = false
+	}
 
 	sendAndAdapt := func(frame []byte) error {
 		start := time.Now()
@@ -358,10 +419,27 @@ func (s *StreamSession) run() {
 		case <-s.stopCh:
 			return
 
+		case <-warningTimer.C:
+			if !warningSent {
+				warningSent = true
+				warnMsg, _ := json.Marshal(map[string]interface{}{
+					"type": "inactivity_warning", "seconds": int(inactivityWarning.Seconds()),
+				})
+				_ = s.ws.WriteFrame(0x1, warnMsg)
+			}
+
+		case <-idleTimer.C:
+			log.Printf("Stream %s: inactivity timeout — disconnecting", s.token)
+			timeoutMsg, _ := json.Marshal(map[string]string{"type": "inactivity_timeout"})
+			_ = s.ws.WriteFrame(0x1, timeoutMsg)
+			return
+
 		case payload := <-inputCh:
+			resetIdleTimer()
 			s.handleInput(payload, width, height)
 
 		case newIdx := <-monitorCh:
+			resetIdleTimer()
 			log.Printf("Stream %s: monitor switch to %d", s.token, newIdx)
 			// Tear down and reinit capture on new monitor
 			captureClose()
@@ -399,6 +477,7 @@ func (s *StreamSession) run() {
 			_ = s.ws.WriteFrame(0x1, reInitJSON)
 
 		case newCodec := <-codecCh:
+			resetIdleTimer()
 			log.Printf("Stream %s: codec switch requested: %s", s.token, newCodec)
 			// Tear down current encoder
 			if useOpenH264 { openH264Close(); useOpenH264 = false }

@@ -7,11 +7,11 @@ package main
 
 #include <windows.h>
 
-// send_mouse_move: moves mouse to absolute screen coordinates (0..65535 range).
+// send_mouse_move: moves mouse to absolute virtual-desktop coordinates (0..65535 range).
 static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
-    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
     inp.mi.dx = (LONG)(x * 65535 / (screen_w > 1 ? screen_w - 1 : 1));
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
     SendInput(1, &inp, sizeof(INPUT));
@@ -21,8 +21,7 @@ static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
 static void send_mouse_button(int button, int down, int screen_w, int screen_h, int x, int y) {
     INPUT inp = {0};
     inp.type = INPUT_MOUSE;
-    // Also move to the click position
-    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
     inp.mi.dx = (LONG)(x * 65535 / (screen_w > 1 ? screen_w - 1 : 1));
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
 
@@ -82,8 +81,41 @@ static int vk_mods_from_char(unsigned short ch) {
     if (res == -1) return 0;
     return (int)((res >> 8) & 0x07);
 }
+
+// clipboard_get_text: reads Unicode text from the clipboard.
+// Returns a malloc'd UTF-8 string, or NULL if no text.
+static char* clipboard_get_text(void) {
+    if (!OpenClipboard(NULL)) return NULL;
+    HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+    if (!hData) { CloseClipboard(); return NULL; }
+    wchar_t *wstr = (wchar_t*)GlobalLock(hData);
+    if (!wstr) { CloseClipboard(); return NULL; }
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+    char *utf8 = (char*)malloc(len);
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8, len, NULL, NULL);
+    GlobalUnlock(hData);
+    CloseClipboard();
+    return utf8;
+}
+
+// clipboard_set_text: writes UTF-8 text to the clipboard.
+static int clipboard_set_text(const char *utf8) {
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (wlen <= 0) return -1;
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, wlen * sizeof(wchar_t));
+    if (!hMem) return -2;
+    wchar_t *wstr = (wchar_t*)GlobalLock(hMem);
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wstr, wlen);
+    GlobalUnlock(hMem);
+    if (!OpenClipboard(NULL)) { GlobalFree(hMem); return -3; }
+    EmptyClipboard();
+    SetClipboardData(CF_UNICODETEXT, hMem);
+    CloseClipboard();
+    return 0;
+}
 */
 import "C"
+import "unsafe"
 
 // g_monOffX/Y are set by the stream code when a monitor is selected,
 // so mouse coordinates are offset to the correct monitor.
@@ -135,6 +167,22 @@ func inputVKFromKey(key string) (vk int, mods int) {
 	vk = int(C.vk_from_char(C.ushort(ch)))
 	mods = int(C.vk_mods_from_char(C.ushort(ch)))
 	return vk, mods
+}
+
+func clipboardGet() string {
+	cstr := C.clipboard_get_text()
+	if cstr == nil {
+		return ""
+	}
+	s := C.GoString(cstr)
+	C.free(unsafe.Pointer(cstr))
+	return s
+}
+
+func clipboardSet(text string) {
+	cstr := C.CString(text)
+	C.clipboard_set_text(cstr)
+	C.free(unsafe.Pointer(cstr))
 }
 
 var inputIsBlocked bool

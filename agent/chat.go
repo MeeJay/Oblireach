@@ -132,6 +132,25 @@ func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
 	chatPipeSend(cs.conn, chatPipeMsg, msg)
 }
 
+func forwardChatFile(chatID string, payload map[string]interface{}) {
+	v, ok := activeChats.Load(chatID)
+	if !ok {
+		return
+	}
+	cs := v.(*ChatSession)
+	if cs.conn == nil {
+		return
+	}
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"action":   "file_transfer",
+		"fileName": payload["fileName"],
+		"fileSize": payload["fileSize"],
+		"fileData": payload["fileData"],
+	})
+	chatPipeSend(cs.conn, chatPipeMsg, msg)
+}
+
 func forwardRemoteRequest(chatID, message string) {
 	v, ok := activeChats.Load(chatID)
 	if !ok {

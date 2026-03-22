@@ -139,21 +139,40 @@ static void paint_chat(HWND hwnd) {
     FillRect(mem, &cr, bgBr);
     DeleteObject(bgBr);
 
+    // Left accent bar (indigo, like the toast)
+    RECT acRc = {0, 0, 4, cr.bottom};
+    HBRUSH acBr = CreateSolidBrush(CLR_ACCENT);
+    FillRect(mem, &acRc, acBr);
+    DeleteObject(acBr);
+
     // Title bar
-    RECT tbr = {0, 0, cr.right, TITLEBAR_H};
+    RECT tbr = {4, 0, cr.right, TITLEBAR_H};
     HBRUSH tbBr = CreateSolidBrush(CLR_TITLEBAR);
     FillRect(mem, &tbr, tbBr);
     DeleteObject(tbBr);
 
+    // Accent line under title bar
+    RECT acLine = {4, TITLEBAR_H - 2, cr.right, TITLEBAR_H};
+    HBRUSH acLineBr = CreateSolidBrush(CLR_ACCENT);
+    FillRect(mem, &acLine, acLineBr);
+    DeleteObject(acLineBr);
+
     SetBkMode(mem, TRANSPARENT);
     SelectObject(mem, g_fontTitle);
-    SetTextColor(mem, CLR_TEXT);
-    RECT titleRc = {12, 8, cr.right - 30, TITLEBAR_H};
+    SetTextColor(mem, CLR_ACCENT);
+    RECT titleRc = {16, 8, cr.right - 30, TITLEBAR_H};
     wchar_t titleBuf[128];
-    _snwprintf(titleBuf, 128, L"Chat - %s", g_opName);
-    DrawTextW(mem, titleBuf, -1, &titleRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+    _snwprintf(titleBuf, 128, L"Obliance Chat");
+    DrawTextW(mem, titleBuf, -1, &titleRc, DT_LEFT | DT_SINGLELINE);
+
+    // Operator name (smaller, dimmer)
+    SelectObject(mem, g_fontSmall);
+    SetTextColor(mem, CLR_TEXT_DIM);
+    RECT opRc = {16, 22, cr.right - 30, TITLEBAR_H};
+    DrawTextW(mem, g_opName, -1, &opRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     // Close button
+    SelectObject(mem, g_fontTitle);
     SetTextColor(mem, RGB(239, 68, 68));
     RECT closRc = {cr.right - 28, 8, cr.right - 4, TITLEBAR_H};
     DrawTextW(mem, L"\x2715", -1, &closRc, DT_CENTER | DT_SINGLELINE);
@@ -244,6 +263,15 @@ static LRESULT CALLBACK chatWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         static HBRUSH editBr = NULL;
         if (!editBr) editBr = CreateSolidBrush(CLR_INPUT_BG);
         return (LRESULT)editBr;
+    }
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORSTATIC: {
+        HDC hdcBtn = (HDC)wp;
+        SetTextColor(hdcBtn, CLR_TEXT);
+        SetBkColor(hdcBtn, CLR_BG);
+        static HBRUSH btnBr = NULL;
+        if (!btnBr) btnBr = CreateSolidBrush(CLR_BG);
+        return (LRESULT)btnBr;
     }
 
     case WM_COMMAND:
@@ -406,7 +434,7 @@ static HWND create_chat_window(const wchar_t *operatorName) {
     int y = wa.bottom - CHAT_H - CHAT_MARGIN;
 
     g_chatWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"ObliReachChat", NULL,
         WS_POPUP | WS_VISIBLE,
         x, y, CHAT_W, CHAT_H,

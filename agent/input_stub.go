@@ -1,4 +1,4 @@
-//go:build !windows && !darwin
+//go:build !windows && !darwin && !linux
 
 package main
 
@@ -8,5 +8,7 @@ func inputMouseButton(button int, down bool, x, y int) {}
 func inputMouseScroll(delta int)                        {}
 func inputKey(vk int, down bool)                        {}
 func inputVKFromKey(key string) (int, int)               { return 0, 0 }
+func clipboardGet() string                               { return "" }
+func clipboardSet(text string)                           {}
 func inputBlock(block bool)                             {}
 func inputUnblock()                                     {}
