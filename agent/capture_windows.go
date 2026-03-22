@@ -28,6 +28,56 @@ static HBITMAP g_hOldBmp   = NULL;
 // ── Common ────────────────────────────────────────────────────────────────────
 static int g_width  = 0;
 static int g_height = 0;
+static int g_mon_x  = 0; // monitor origin (for multi-monitor coordinate mapping)
+static int g_mon_y  = 0;
+static int g_target_monitor = 0; // which monitor to capture
+
+// ── Monitor enumeration ──────────────────────────────────────────────────────
+
+#define OR_MAX_MONITORS 16
+
+typedef struct {
+    int index;
+    wchar_t name[32];
+    int x, y, w, h;
+} MonitorInfoC;
+
+static int enumerate_monitors(MonitorInfoC *out, int maxCount) {
+    IDXGIFactory1 *factory = NULL;
+    HRESULT hr;
+    int count = 0;
+    UINT ai, oi;
+    IDXGIAdapter *adapter = NULL;
+    IDXGIOutput *output = NULL;
+
+    // CreateDXGIFactory1 is in dxgi.dll (already linked via -ldxgi)
+    hr = CreateDXGIFactory1(&IID_IDXGIFactory1, (void**)&factory);
+    if (FAILED(hr)) return 0;
+
+    for (ai = 0; IDXGIFactory1_EnumAdapters(factory, ai, &adapter) == S_OK; ai++) {
+        for (oi = 0; IDXGIAdapter_EnumOutputs(adapter, oi, &output) == S_OK; oi++) {
+            if (count >= maxCount) { IUnknown_Release(output); break; }
+            DXGI_OUTPUT_DESC desc;
+            IDXGIOutput_GetDesc(output, &desc);
+            out[count].index = count;
+            memcpy(out[count].name, desc.DeviceName, sizeof(desc.DeviceName));
+            out[count].x = desc.DesktopCoordinates.left;
+            out[count].y = desc.DesktopCoordinates.top;
+            out[count].w = desc.DesktopCoordinates.right - desc.DesktopCoordinates.left;
+            out[count].h = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
+            count++;
+            IUnknown_Release(output);
+        }
+        IUnknown_Release(adapter);
+    }
+    IUnknown_Release(factory);
+    return count;
+}
+
+static void capture_get_monitor_offset(int *ox, int *oy) {
+    *ox = g_mon_x;
+    *oy = g_mon_y;
+}
 
 // ── DXGI helpers ──────────────────────────────────────────────────────────────
 
@@ -39,7 +89,8 @@ static void dxgi_close(void) {
 }
 
 // Returns 0 on success, negative on any failure (resources cleaned up).
-static int dxgi_init(void) {
+// monitor_idx: which output to capture (0 = primary, enumerate order).
+static int dxgi_init(int monitor_idx) {
     D3D_FEATURE_LEVEL fl;
     HRESULT hr = D3D11CreateDevice(
         NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
@@ -55,6 +106,7 @@ static int dxgi_init(void) {
         if (FAILED(hr)) return -1;
     }
 
+    // Find the target output by walking all adapters/outputs
     IDXGIDevice *dxgiDev = NULL;
     hr = ID3D11Device_QueryInterface(g_device, &IID_IDXGIDevice, (void**)&dxgiDev);
     if (FAILED(hr)) { dxgi_close(); return -2; }
@@ -64,23 +116,46 @@ static int dxgi_init(void) {
     IUnknown_Release(dxgiDev);
     if (FAILED(hr)) { dxgi_close(); return -3; }
 
+    // Walk outputs to find monitor_idx
     IDXGIOutput *output = NULL;
-    hr = IDXGIAdapter_EnumOutputs(adapter, 0, &output);
+    IDXGIFactory1 *factory = NULL;
+    IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory1, (void**)&factory);
     IUnknown_Release(adapter);
-    if (FAILED(hr)) { dxgi_close(); return -4; }
+    if (!factory) { dxgi_close(); return -3; }
+
+    int cur = 0;
+    int found = 0;
+    UINT ai, oi;
+    IDXGIAdapter *adp = NULL;
+    for (ai = 0; !found && IDXGIFactory1_EnumAdapters(factory, ai, &adp) == S_OK; ai++) {
+        IDXGIOutput *out = NULL;
+        for (oi = 0; IDXGIAdapter_EnumOutputs(adp, oi, &out) == S_OK; oi++) {
+            if (cur == monitor_idx) {
+                output = out;
+                found = 1;
+                break;
+            }
+            cur++;
+            IUnknown_Release(out);
+        }
+        IUnknown_Release(adp);
+    }
+    IUnknown_Release(factory);
+
+    if (!output) { dxgi_close(); return -4; }
 
     DXGI_OUTPUT_DESC desc;
     IDXGIOutput_GetDesc(output, &desc);
     g_width  = desc.DesktopCoordinates.right  - desc.DesktopCoordinates.left;
     g_height = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
+    g_mon_x  = desc.DesktopCoordinates.left;
+    g_mon_y  = desc.DesktopCoordinates.top;
 
     IDXGIOutput1 *output1 = NULL;
     hr = IDXGIOutput_QueryInterface(output, &IID_IDXGIOutput1, (void**)&output1);
     IUnknown_Release(output);
     if (FAILED(hr)) { dxgi_close(); return -5; }
 
-    // DuplicateOutput fails with DXGI_ERROR_UNSUPPORTED in RDP sessions —
-    // the caller will fall back to GDI capture in that case.
     hr = IDXGIOutput1_DuplicateOutput(output1, (IUnknown*)g_device, &g_dup);
     IUnknown_Release(output1);
     if (FAILED(hr)) { dxgi_close(); g_width = 0; g_height = 0; return -6; }
@@ -99,13 +174,22 @@ static void gdi_close(void) {
     g_use_gdi = 0;
 }
 
-// Returns 0 on success, negative on failure.
-static int gdi_init(void) {
+// gdi_init: rx/ry/rw/rh = region to capture. If rw <= 0, captures virtual screen.
+static int gdi_init(int rx, int ry, int rw, int rh) {
     g_hdcScreen = GetDC(NULL);
     if (!g_hdcScreen) return -10;
 
-    g_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    g_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (rw > 0 && rh > 0) {
+        g_width  = rw;
+        g_height = rh;
+        g_mon_x  = rx;
+        g_mon_y  = ry;
+    } else {
+        g_width  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        g_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        g_mon_x  = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        g_mon_y  = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    }
     if (g_width <= 0 || g_height <= 0) {
         ReleaseDC(NULL, g_hdcScreen);
         g_hdcScreen = NULL;
@@ -125,11 +209,25 @@ static int gdi_init(void) {
 
 // ── Public capture API ────────────────────────────────────────────────────────
 
-// capture_init: tries DXGI first; falls back to GDI for RDP/remote sessions.
+// capture_init_monitor: tries DXGI first; falls back to GDI.
+static int capture_init_monitor(int monitor_idx) {
+    g_target_monitor = monitor_idx;
+
+    if (dxgi_init(monitor_idx) == 0) return 0;
+
+    // DXGI unavailable — use GDI. Find monitor region via enumeration.
+    MonitorInfoC mons[OR_MAX_MONITORS];
+    int n = enumerate_monitors(mons, OR_MAX_MONITORS);
+    if (monitor_idx >= 0 && monitor_idx < n) {
+        return gdi_init(mons[monitor_idx].x, mons[monitor_idx].y,
+                        mons[monitor_idx].w, mons[monitor_idx].h);
+    }
+    return gdi_init(0, 0, 0, 0); // fallback: entire virtual screen
+}
+
+// capture_init: backward compat — captures primary monitor.
 static int capture_init(void) {
-    if (dxgi_init() == 0) return 0;
-    // DXGI unavailable (e.g. RDP session) — use GDI BitBlt.
-    return gdi_init();
+    return capture_init_monitor(0);
 }
 
 static void capture_get_size(int *w, int *h) {
@@ -143,7 +241,7 @@ static void capture_get_size(int *w, int *h) {
 static int capture_frame(unsigned char *out_bgra) {
     if (g_use_gdi) {
         // GDI BitBlt — works in RDP sessions (CPU capture, no hardware acceleration)
-        if (!BitBlt(g_hdcMem, 0, 0, g_width, g_height, g_hdcScreen, 0, 0, SRCCOPY | CAPTUREBLT))
+        if (!BitBlt(g_hdcMem, 0, 0, g_width, g_height, g_hdcScreen, g_mon_x, g_mon_y, SRCCOPY | CAPTUREBLT))
             return -1;
 
         BITMAPINFO bmi;
@@ -220,8 +318,56 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"syscall"
 	"unsafe"
 )
+
+// MonitorInfo describes a connected display for the viewer's monitor selector.
+type MonitorInfo struct {
+	Index  int    `json:"index"`
+	Name   string `json:"name"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+func enumerateMonitors() []MonitorInfo {
+	var cmons [16]C.MonitorInfoC
+	n := int(C.enumerate_monitors(&cmons[0], C.int(16)))
+	out := make([]MonitorInfo, n)
+	for i := 0; i < n; i++ {
+		out[i] = MonitorInfo{
+			Index:  int(cmons[i].index),
+			Name:   syscall.UTF16ToString((*[32]uint16)(unsafe.Pointer(&cmons[i].name[0]))[:]),
+			X:      int(cmons[i].x),
+			Y:      int(cmons[i].y),
+			Width:  int(cmons[i].w),
+			Height: int(cmons[i].h),
+		}
+	}
+	return out
+}
+
+func captureInitMonitor(idx int) error {
+	ret := int(C.capture_init_monitor(C.int(idx)))
+	if ret < 0 {
+		return fmt.Errorf("capture init monitor %d failed (code %d)", idx, ret)
+	}
+	captureActive = true
+	if C.capture_is_gdi() != 0 {
+		log.Printf("capture: monitor %d via GDI", idx)
+	} else {
+		log.Printf("capture: monitor %d via DXGI", idx)
+	}
+	return nil
+}
+
+func captureMonitorOffset() (x, y int) {
+	var cx, cy C.int
+	C.capture_get_monitor_offset(&cx, &cy)
+	return int(cx), int(cy)
+}
 
 var captureActive bool
 

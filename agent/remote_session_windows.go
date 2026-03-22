@@ -259,13 +259,19 @@ func runHelperMode(addr string) {
 		}
 	}()
 
+	// Set monitor offset for input coordinate mapping
+	monOffX, monOffY := captureMonitorOffset()
+	setInputMonitorOffset(monOffX, monOffY)
+	defer inputUnblock()
+
 	// ── Send init message to service ─────────────────────────────────────────
 	initMsg := map[string]interface{}{
-		"type":   "init",
-		"width":  w,
-		"height": h,
-		"fps":    fps,
-		"codec":  "h264",
+		"type":     "init",
+		"width":    w,
+		"height":   h,
+		"fps":      fps,
+		"codec":    "h264",
+		"monitors": enumerateMonitors(),
 	}
 	initJSON, _ := json.Marshal(initMsg)
 	if err := pipeSend(conn, pipeTypeInit, initJSON); err != nil {
@@ -276,6 +282,7 @@ func runHelperMode(addr string) {
 	stopCh := make(chan struct{})
 	inputCh := make(chan []byte, 64)
 	codecCh := make(chan string, 4)
+	monitorCh := make(chan int, 4)
 
 	// ── Reader goroutine: input / stop from service ───────────────────────────
 	go func() {
@@ -291,14 +298,24 @@ func runHelperMode(addr string) {
 					Type    string `json:"type"`
 					Codec   string `json:"codec"`
 					Bitrate int    `json:"bitrate"`
+					Index   int    `json:"index"`
+					Block   bool   `json:"block"`
 				}
 				if json.Unmarshal(payload, &peek) == nil {
-					if peek.Type == "set_codec" {
+					switch peek.Type {
+					case "set_codec":
 						select { case codecCh <- peek.Codec: default: }
 						continue
-					}
-					if peek.Type == "set_bitrate" && peek.Bitrate > 0 {
-						openH264SetBitrate(peek.Bitrate)
+					case "set_bitrate":
+						if peek.Bitrate > 0 { openH264SetBitrate(peek.Bitrate) }
+						continue
+					case "set_monitor":
+						select { case monitorCh <- peek.Index: default: }
+						continue
+					case "set_input_block":
+						inputBlock(peek.Block)
+						confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": peek.Block})
+						_ = pipeSend(conn, pipeTypeControl, confirm)
 						continue
 					}
 				}
@@ -333,6 +350,40 @@ func runHelperMode(addr string) {
 				return
 			}
 			dispatchInputJSON(payload, w, h)
+
+		case newIdx := <-monitorCh:
+			log.Printf("helper: monitor switch to %d", newIdx)
+			captureClose()
+			if useOpenH264 { openH264Close(); useOpenH264 = false }
+			if useVP9 { vp9EncoderClose(); useVP9 = false }
+			if useH265 { h265EncoderClose(); useH265 = false }
+			if useAV1 { av1EncoderClose(); useAV1 = false }
+			encoderClose()
+			useJPEG = false
+
+			if err := captureInitMonitor(newIdx); err != nil {
+				log.Printf("helper: monitor switch failed: %v", err)
+				continue
+			}
+			w = captureWidth()
+			h = captureHeight()
+			bgraBuf = make([]byte, w*h*4)
+			monOffX, monOffY = captureMonitorOffset()
+			setInputMonitorOffset(monOffX, monOffY)
+
+			if openH264Available() {
+				if err := openH264Init(w, h, fps, bitrate); err == nil {
+					useOpenH264 = true
+				}
+			}
+			if !useOpenH264 { useJPEG = true }
+
+			reInit := map[string]interface{}{
+				"type": "init", "width": w, "height": h,
+				"fps": fps, "codec": "h264", "monitors": enumerateMonitors(),
+			}
+			reInitJSON, _ := json.Marshal(reInit)
+			_ = pipeSend(conn, pipeTypeInit, reInitJSON)
 
 		case newCodec := <-codecCh:
 			log.Printf("helper: codec switch requested: %s", newCodec)

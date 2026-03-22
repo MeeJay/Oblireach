@@ -9,8 +9,27 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ── Command WS send ─────────────────────────────────────────────────────────
+// Exposes the active command WS for sending agent→server messages (used by chat).
+
+var (
+	cmdWSActive   *wsConn
+	cmdWSActiveMu sync.Mutex
+)
+
+func cmdWSSend(payload []byte) error {
+	cmdWSActiveMu.Lock()
+	ws := cmdWSActive
+	cmdWSActiveMu.Unlock()
+	if ws == nil {
+		return fmt.Errorf("command WS not connected")
+	}
+	return ws.WriteFrame(0x1, payload)
+}
 
 // ── Timing constants ──────────────────────────────────────────────────────────
 
@@ -100,6 +119,15 @@ func cmdWSSession(cfg *Config) error {
 		return fmt.Errorf("connect %s: %w", wsBase, err)
 	}
 	defer ws.Close()
+
+	cmdWSActiveMu.Lock()
+	cmdWSActive = ws
+	cmdWSActiveMu.Unlock()
+	defer func() {
+		cmdWSActiveMu.Lock()
+		cmdWSActive = nil
+		cmdWSActiveMu.Unlock()
+	}()
 
 	log.Printf("Command WS: connected to %s", wsBase)
 

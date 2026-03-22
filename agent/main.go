@@ -148,12 +148,25 @@ func main() {
 	notifyTitle     := flag.String("notify-title", "", "Show a toast notification with this title (internal use)")
 	notifyMsg       := flag.String("notify-msg", "", "Toast notification message body")
 	notifyTimeout   := flag.Int("notify-timeout", 8, "Toast auto-close timeout in seconds")
+	chatHelper      := flag.Bool("chat-helper", false, "Run as chat helper subprocess (internal use)")
+	chatID          := flag.String("chat-id", "", "Chat session ID (chat-helper mode)")
+	chatOperator    := flag.String("operator", "", "Operator display name (chat-helper mode)")
 	flag.Parse()
 
 	// ── Toast notification subprocess mode ───────────────────────────────────
 	// Launched by the service process inside a user session to show a toast.
 	if *notifyTitle != "" {
 		runToastNotification(*notifyTitle, *notifyMsg, *notifyTimeout)
+		return
+	}
+
+	// ── Chat helper subprocess mode ──────────────────────────────────────────
+	if *chatHelper {
+		if *helperAddr == "" || *chatID == "" {
+			fmt.Fprintln(os.Stderr, "--addr and --chat-id required in chat-helper mode")
+			os.Exit(1)
+		}
+		runChatHelperMode(*helperAddr, *chatID, *chatOperator)
 		return
 	}
 

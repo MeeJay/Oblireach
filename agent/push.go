@@ -151,6 +151,44 @@ func handleCommand(cfg *Config, cmd *command) {
 			log.Printf("Command %s: update: missing url in payload", cmd.ID)
 		}
 
+	case "open_chat":
+		chatID := payloadString(cmd.Payload, "chatId")
+		operatorName := payloadString(cmd.Payload, "operatorName")
+		sessionID := -1
+		if raw, ok := cmd.Payload["sessionId"]; ok {
+			if f, ok := raw.(float64); ok {
+				sessionID = int(f)
+			}
+		}
+		if chatID == "" {
+			log.Printf("Command %s: missing chatId", cmd.ID)
+			return
+		}
+		if err := startChat(cfg, chatID, operatorName, sessionID); err != nil {
+			log.Printf("Command %s: startChat failed: %v", cmd.ID, err)
+		}
+
+	case "chat_message":
+		chatID := payloadString(cmd.Payload, "chatId")
+		message := payloadString(cmd.Payload, "message")
+		operatorName := payloadString(cmd.Payload, "operatorName")
+		ts := int64(0)
+		if raw, ok := cmd.Payload["timestamp"]; ok {
+			if f, ok := raw.(float64); ok {
+				ts = int64(f)
+			}
+		}
+		forwardChatMessage(chatID, operatorName, message, ts)
+
+	case "close_chat":
+		chatID := payloadString(cmd.Payload, "chatId")
+		stopChat(chatID)
+
+	case "request_remote":
+		chatID := payloadString(cmd.Payload, "chatId")
+		message := payloadString(cmd.Payload, "message")
+		forwardRemoteRequest(chatID, message)
+
 	default:
 		log.Printf("Command %s: unknown type %q", cmd.ID, cmd.Type)
 	}

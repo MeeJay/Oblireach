@@ -53,32 +53,64 @@ static void send_key(int vk, int down) {
     SendInput(1, &inp, sizeof(INPUT));
 }
 
-// get_screen_size: fills *w and *h with GetSystemMetrics dimensions.
-static void get_screen_size(int *w, int *h) {
-    *w = GetSystemMetrics(SM_CXSCREEN);
-    *h = GetSystemMetrics(SM_CYSCREEN);
+// get_virtual_screen_size: returns the full virtual desktop dimensions.
+static void get_virtual_screen_size(int *w, int *h, int *ox, int *oy) {
+    *w  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    *h  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    *ox = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    *oy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+}
+
+// block_user_input: calls BlockInput(TRUE) to block local mouse/keyboard.
+static BOOL block_user_input(int block) {
+    return BlockInput(block ? TRUE : FALSE);
+}
+
+// vk_from_char: uses VkKeyScanW to find the VK code for a Unicode character,
+// respecting the remote system's keyboard layout.
+// Returns the VK code (low byte), or 0 if unmapped.
+static int vk_from_char(unsigned short ch) {
+    SHORT res = VkKeyScanW((WCHAR)ch);
+    if (res == -1) return 0;
+    return (int)(res & 0xFF);
+}
+
+// vk_shift_from_char: returns modifier flags for the character.
+// bit 0 = Shift, bit 1 = Ctrl, bit 2 = Alt
+static int vk_mods_from_char(unsigned short ch) {
+    SHORT res = VkKeyScanW((WCHAR)ch);
+    if (res == -1) return 0;
+    return (int)((res >> 8) & 0x07);
 }
 */
 import "C"
 
-func inputScreenSize() (w, h int) {
-	var cw, ch C.int
-	C.get_screen_size(&cw, &ch)
-	return int(cw), int(ch)
+// g_monOffX/Y are set by the stream code when a monitor is selected,
+// so mouse coordinates are offset to the correct monitor.
+var g_monOffX, g_monOffY int
+
+func setInputMonitorOffset(x, y int) {
+	g_monOffX = x
+	g_monOffY = y
 }
 
 func inputMouseMove(x, y int) {
-	sw, sh := inputScreenSize()
-	C.send_mouse_move(C.int(sw), C.int(sh), C.int(x), C.int(y))
+	var vw, vh, vox, voy C.int
+	C.get_virtual_screen_size(&vw, &vh, &vox, &voy)
+	// x/y are relative to the captured monitor. Add monitor offset to get virtual coords.
+	absX := g_monOffX + x - int(vox)
+	absY := g_monOffY + y - int(voy)
+	C.send_mouse_move(C.int(vw), C.int(vh), C.int(absX), C.int(absY))
 }
 
 func inputMouseButton(button int, down bool, x, y int) {
-	sw, sh := inputScreenSize()
+	var vw, vh, vox, voy C.int
+	C.get_virtual_screen_size(&vw, &vh, &vox, &voy)
+	absX := g_monOffX + x - int(vox)
+	absY := g_monOffY + y - int(voy)
 	d := C.int(0)
-	if down {
-		d = 1
-	}
-	C.send_mouse_button(C.int(button), d, C.int(sw), C.int(sh), C.int(x), C.int(y))
+	if down { d = 1 }
+	C.send_mouse_button(C.int(button), d, C.int(vw), C.int(vh), C.int(absX), C.int(absY))
 }
 
 func inputMouseScroll(delta int) {
@@ -87,8 +119,36 @@ func inputMouseScroll(delta int) {
 
 func inputKey(vk int, down bool) {
 	d := C.int(0)
-	if down {
-		d = 1
-	}
+	if down { d = 1 }
 	C.send_key(C.int(vk), d)
+}
+
+// inputVKFromKey converts a browser e.key string (single character) to
+// the correct Windows VK code for the remote system's keyboard layout.
+// Returns (vk, needsShift). If the character can't be mapped, returns (0, false).
+func inputVKFromKey(key string) (vk int, mods int) {
+	runes := []rune(key)
+	if len(runes) != 1 {
+		return 0, 0
+	}
+	ch := runes[0]
+	vk = int(C.vk_from_char(C.ushort(ch)))
+	mods = int(C.vk_mods_from_char(C.ushort(ch)))
+	return vk, mods
+}
+
+var inputIsBlocked bool
+
+func inputBlock(block bool) {
+	b := C.int(0)
+	if block { b = 1 }
+	C.block_user_input(b)
+	inputIsBlocked = block
+}
+
+func inputUnblock() {
+	if inputIsBlocked {
+		C.block_user_input(0)
+		inputIsBlocked = false
+	}
 }

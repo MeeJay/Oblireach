@@ -192,6 +192,7 @@ func stopStream(token string) {
 //  4. Handle incoming input frames
 func (s *StreamSession) run() {
 	defer s.stop()
+	defer inputUnblock() // always unblock input when stream ends
 
 	// Lock this goroutine to its OS thread for the entire stream lifetime.
 	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.
@@ -238,13 +239,18 @@ func (s *StreamSession) run() {
 		}
 	}()
 
+	// Set monitor offset for input coordinate mapping
+	monOffX, monOffY := captureMonitorOffset()
+	setInputMonitorOffset(monOffX, monOffY)
+
 	// ── Send init message ─────────────────────────────────────────────────────
 	initMsg := map[string]interface{}{
-		"type":   "init",
-		"width":  width,
-		"height": height,
-		"fps":    fps,
-		"codec":  "h264",
+		"type":     "init",
+		"width":    width,
+		"height":   height,
+		"fps":      fps,
+		"codec":    "h264",
+		"monitors": enumerateMonitors(),
 	}
 
 	initJSON, _ := json.Marshal(initMsg)
@@ -274,7 +280,8 @@ func (s *StreamSession) run() {
 
 	// ── Input handler (browser → agent) ──────────────────────────────────────
 	inputCh := make(chan []byte, 64)
-	codecCh := make(chan string, 4) // codec switch requests
+	codecCh := make(chan string, 4)
+	monitorCh := make(chan int, 4) // monitor switch requests
 	go func() {
 		defer s.stop()
 		for {
@@ -288,19 +295,28 @@ func (s *StreamSession) run() {
 			case 0x9: // ping
 				_ = s.ws.SendPong(payload)
 			case 0x1: // text = JSON control
-				// Check for codec switch command
-				var peek struct{ Type, Codec string }
-				if json.Unmarshal(payload, &peek) == nil && peek.Type == "set_codec" {
-					select {
-					case codecCh <- peek.Codec:
-					default:
-					}
-				} else {
-					select {
-					case inputCh <- payload:
-					default:
+				var peek struct {
+					Type  string `json:"type"`
+					Codec string `json:"codec"`
+					Index int    `json:"index"`
+					Block bool   `json:"block"`
+				}
+				if json.Unmarshal(payload, &peek) == nil {
+					switch peek.Type {
+					case "set_codec":
+						select { case codecCh <- peek.Codec: default: }
+						continue
+					case "set_monitor":
+						select { case monitorCh <- peek.Index: default: }
+						continue
+					case "set_input_block":
+						inputBlock(peek.Block)
+						confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": peek.Block})
+						_ = s.ws.WriteFrame(0x1, confirm)
+						continue
 					}
 				}
+				select { case inputCh <- payload: default: }
 			}
 		}
 	}()
@@ -344,6 +360,43 @@ func (s *StreamSession) run() {
 
 		case payload := <-inputCh:
 			s.handleInput(payload, width, height)
+
+		case newIdx := <-monitorCh:
+			log.Printf("Stream %s: monitor switch to %d", s.token, newIdx)
+			// Tear down and reinit capture on new monitor
+			captureClose()
+			if useOpenH264 { openH264Close(); useOpenH264 = false }
+			if useVP9 { vp9EncoderClose(); useVP9 = false }
+			if useH265 { h265EncoderClose(); useH265 = false }
+			if useAV1 { av1EncoderClose(); useAV1 = false }
+			encoderClose()
+			useJPEG = false
+
+			if err := captureInitMonitor(newIdx); err != nil {
+				log.Printf("Stream %s: monitor switch failed: %v", s.token, err)
+				continue
+			}
+			width = captureWidth()
+			height = captureHeight()
+			bgraBuf = make([]byte, width*height*4)
+			monOffX, monOffY = captureMonitorOffset()
+			setInputMonitorOffset(monOffX, monOffY)
+
+			// Reinit encoder
+			if openH264Available() {
+				if err := openH264Init(width, height, fps, bitrate); err == nil {
+					useOpenH264 = true
+				}
+			}
+			if !useOpenH264 { useJPEG = true }
+
+			// Send new init to browser
+			reInit := map[string]interface{}{
+				"type": "init", "width": width, "height": height,
+				"fps": fps, "codec": "h264", "monitors": enumerateMonitors(),
+			}
+			reInitJSON, _ := json.Marshal(reInit)
+			_ = s.ws.WriteFrame(0x1, reInitJSON)
 
 		case newCodec := <-codecCh:
 			log.Printf("Stream %s: codec switch requested: %s", s.token, newCodec)
@@ -500,6 +553,7 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 		Button int     `json:"button"`
 		Delta  float64 `json:"delta"`
 		Code   string  `json:"code"`
+		Key    string  `json:"key"`
 		Ctrl   bool    `json:"ctrl"`
 		Shift  bool    `json:"shift"`
 		Alt    bool    `json:"alt"`
@@ -527,9 +581,28 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 		}
 
 	case "key":
+		down := msg.Action == "down"
+		// Try layout-aware mapping from e.key first (handles AZERTY, QWERTZ, etc.)
+		if len([]rune(msg.Key)) == 1 {
+			vk, mods := inputVKFromKey(msg.Key)
+			if vk != 0 {
+				// If the character needs Shift on the remote layout but the
+				// browser didn't set Shift, inject Shift press/release around it.
+				needsShift := (mods & 1) != 0
+				if down && needsShift && !msg.Shift {
+					inputKey(0x10, true) // VK_SHIFT down
+				}
+				inputKey(vk, down)
+				if down && needsShift && !msg.Shift {
+					inputKey(0x10, false) // VK_SHIFT up
+				}
+				break
+			}
+		}
+		// Fallback: use physical code mapping (for F-keys, arrows, modifiers, etc.)
 		vk := codeToVK(msg.Code)
 		if vk != 0 {
-			inputKey(vk, msg.Action == "down")
+			inputKey(vk, down)
 		}
 
 	case "resize_viewport":
