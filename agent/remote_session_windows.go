@@ -44,19 +44,21 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 		}
 	}
 
-	if (!WTSQueryUserToken(sessionId, &hToken)) {
-		// No interactive user in this session — use SYSTEM token and relocate it.
-		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hToken)) {
+	// Always use SYSTEM token (LocalSystem from our service process) and
+	// relocate it to the target session. This ensures the helper runs with
+	// high integrity, bypassing UIPI so SendInput works even when the user
+	// has elevated (admin) windows in the foreground.
+	{
+		HANDLE hSysToken = NULL;
+		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hSysToken)) {
 			return -(int)GetLastError();
 		}
-		HANDLE hDup = NULL;
-		if (!DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, NULL,
-				SecurityImpersonation, TokenPrimary, &hDup)) {
-			CloseHandle(hToken);
+		if (!DuplicateTokenEx(hSysToken, TOKEN_ALL_ACCESS, NULL,
+				SecurityImpersonation, TokenPrimary, &hToken)) {
+			CloseHandle(hSysToken);
 			return -(int)GetLastError();
 		}
-		CloseHandle(hToken);
-		hToken = hDup;
+		CloseHandle(hSysToken);
 		DWORD sid = sessionId;
 		if (!SetTokenInformation(hToken, TokenSessionId, &sid, sizeof(sid))) {
 			CloseHandle(hToken);
@@ -64,8 +66,17 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 		}
 	}
 
+	// Build environment from the user's token (for TEMP, APPDATA, etc.)
+	// but fall back to the SYSTEM token if no user is logged in.
 	LPVOID pEnv = NULL;
-	CreateEnvironmentBlock(&pEnv, hToken, FALSE);
+	{
+		HANDLE hUserToken = NULL;
+		if (WTSQueryUserToken(sessionId, &hUserToken)) {
+			CreateEnvironmentBlock(&pEnv, hUserToken, FALSE);
+			CloseHandle(hUserToken);
+		}
+		if (!pEnv) CreateEnvironmentBlock(&pEnv, hToken, FALSE);
+	}
 
 	STARTUPINFOW si;
 	ZeroMemory(&si, sizeof(si));
@@ -146,6 +157,7 @@ const (
 	pipeTypeControl   = byte(0x07) // helper → service: JSON control (forwarded as WS text)
 	pipeTypeH265Frame = byte(0x08) // helper → service: H.265 frame data
 	pipeTypeAV1Frame  = byte(0x09) // helper → service: AV1 frame data
+	pipeTypeAudioData = byte(0x0A) // helper → service: audio PCM data
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -264,14 +276,19 @@ func runHelperMode(addr string) {
 	setInputMonitorOffset(monOffX, monOffY)
 	defer inputUnblock()
 
+	// Init audio before sending init message so we can report availability
+	audioInit()
+
 	// ── Send init message to service ─────────────────────────────────────────
 	initMsg := map[string]interface{}{
-		"type":     "init",
-		"width":    w,
-		"height":   h,
-		"fps":      fps,
-		"codec":    "h264",
-		"monitors": enumerateMonitors(),
+		"type":       "init",
+		"width":      w,
+		"height":     h,
+		"fps":        fps,
+		"codec":      "h264",
+		"monitors":   enumerateMonitors(),
+		"audioRate":  audioSampleRate(),
+		"audioAvail": audioInitDone,
 	}
 	initJSON, _ := json.Marshal(initMsg)
 	if err := pipeSend(conn, pipeTypeInit, initJSON); err != nil {
@@ -326,6 +343,26 @@ func runHelperMode(addr string) {
 			}
 		}
 	}()
+
+	// ── Audio capture (in the user's session context) ───────────────────────
+	defer audioClose()
+	if audioInitDone {
+		go func() {
+			ticker := time.NewTicker(20 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopCh:
+					return
+				case <-ticker.C:
+					data := audioCapture()
+					if len(data) > 0 {
+						_ = pipeSend(conn, pipeTypeAudioData, data)
+					}
+				}
+			}
+		}()
+	}
 
 	// ── Capture/encode/send loop ──────────────────────────────────────────────
 	bgraBuf := make([]byte, w*h*4)
@@ -648,6 +685,12 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 				log.Printf("Stream %s: send control to browser failed: %v", s.token, err)
 				return
 			}
+		} else if msgType == pipeTypeAudioData {
+			// Audio data from helper → forward as WS binary to browser
+			frame := make([]byte, 1+len(payload))
+			frame[0] = frameTypeAudio
+			copy(frame[1:], payload)
+			_ = s.ws.WriteFrame(0x2, frame) // best-effort, don't abort stream on audio error
 		} else if msgType == pipeTypeFrame || msgType == pipeTypeJPEGFrame || msgType == pipeTypeVP9Frame || msgType == pipeTypeH265Frame || msgType == pipeTypeAV1Frame {
 			ft := frameTypeH264
 			if msgType == pipeTypeJPEGFrame {

@@ -36,16 +36,17 @@ package main
 
 // ── Colors ───────────────────────────────────────────────────────────────────
 
-#define CLR_BG          RGB(30, 41, 59)
-#define CLR_TITLEBAR    RGB(15, 23, 42)
-#define CLR_INPUT_BG    RGB(51, 65, 85)
-#define CLR_ACCENT      RGB(99, 102, 241)
-#define CLR_TEXT         RGB(241, 245, 249)
+// Deep navy-purple theme matching the Obliance chat design
+#define CLR_BG          RGB(15, 13, 46)   // #0f0d2e
+#define CLR_TITLEBAR    RGB(15, 13, 46)   // same as bg
+#define CLR_INPUT_BG    RGB(26, 22, 64)   // #1a1640
+#define CLR_ACCENT      RGB(99, 102, 241) // #6366f1
+#define CLR_TEXT         RGB(255, 255, 255)
 #define CLR_TEXT_DIM     RGB(148, 163, 184)
-#define CLR_OP_BUBBLE    RGB(55, 48, 163)
-#define CLR_USER_BUBBLE  RGB(51, 65, 85)
-#define CLR_ALLOW        RGB(22, 163, 74)
-#define CLR_DENY         RGB(220, 38, 38)
+#define CLR_OP_BUBBLE    RGB(99, 102, 241) // #6366f1 operator bubble
+#define CLR_USER_BUBBLE  RGB(45, 39, 96)   // #2d2760 user bubble
+#define CLR_ALLOW        RGB(34, 197, 94)  // #22c55e
+#define CLR_DENY         RGB(239, 68, 68)  // #ef4444
 
 // ── Message struct ───────────────────────────────────────────────────────────
 
