@@ -107,16 +107,23 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
       <label>Server URL</label>
       <input id="inp-server" type="url" placeholder="https://obliance.example.com" value="%s"/>
     </div>
-    <div class="form-group">
-      <label>Username</label>
-      <input id="inp-user" type="text" placeholder="admin" value="%s"/>
+    <div id="local-login-fields">
+      <div class="form-group">
+        <label>Username</label>
+        <input id="inp-user" type="text" placeholder="admin" value="%s"/>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input id="inp-pass" type="password" placeholder="••••••••"/>
+      </div>
+      <div class="err-msg" id="login-err"></div>
+      <button class="btn-primary" id="btn-login">Connect</button>
     </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input id="inp-pass" type="password" placeholder="••••••••"/>
+    <div id="sso-login-fields" style="display:none">
+      <div class="err-msg" id="sso-err"></div>
+      <button class="btn-primary" id="btn-sso" style="background:#7c3aed">Sign in with SSO</button>
+      <button class="btn-primary" id="btn-local-fallback" style="background:var(--bg3);border:1px solid var(--border);font-weight:400;font-size:11px;padding:6px;margin-top:4px">Use local login instead</button>
     </div>
-    <div class="err-msg" id="login-err"></div>
-    <button class="btn-primary" id="btn-login">Connect</button>
   </div>
 </div>
 
@@ -190,6 +197,82 @@ function setStatus(msg) { document.getElementById('status-bar').textContent = ms
 // ── Login ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-login').addEventListener('click', doLogin);
 document.getElementById('inp-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('btn-sso').addEventListener('click', doSsoLogin);
+document.getElementById('btn-local-fallback').addEventListener('click', () => {
+  document.getElementById('sso-login-fields').style.display = 'none';
+  document.getElementById('local-login-fields').style.display = '';
+});
+
+// SSO detection: when server URL changes, check if SSO is available.
+let ssoCheckTimer = null;
+document.getElementById('inp-server').addEventListener('input', () => {
+  clearTimeout(ssoCheckTimer);
+  ssoCheckTimer = setTimeout(checkSso, 500);
+});
+
+async function checkSso() {
+  const server = document.getElementById('inp-server').value.trim().replace(/\/$/, '');
+  if (!server) return;
+  // Save server URL so the proxy knows where to forward.
+  await fetch('/local/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serverUrl: server }),
+  });
+  try {
+    const r = await fetch('/proxy/api/auth/sso-config');
+    if (!r.ok) return;
+    const d = await r.json();
+    const sso = d.data || d;
+    if (sso.obligateEnabled && sso.obligateReachable) {
+      document.getElementById('local-login-fields').style.display = 'none';
+      document.getElementById('sso-login-fields').style.display = '';
+    } else {
+      document.getElementById('local-login-fields').style.display = '';
+      document.getElementById('sso-login-fields').style.display = 'none';
+    }
+  } catch {}
+}
+
+async function doSsoLogin() {
+  const server = document.getElementById('inp-server').value.trim().replace(/\/$/, '');
+  const errEl = document.getElementById('sso-err');
+  const btn = document.getElementById('btn-sso');
+  if (!server) { errEl.textContent = 'Server URL required'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  errEl.textContent = '';
+
+  try {
+    // Save server URL.
+    await fetch('/local/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serverUrl: server }),
+    });
+
+    // Initiate desktop SSO flow.
+    const r = await fetch('/proxy/api/auth/sso-desktop-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}', // localCallbackUrl is set server-side by the proxy
+    });
+    const d = await r.json();
+    if (!d.success || !d.data?.authorizeUrl) {
+      errEl.textContent = d.error || 'SSO initialization failed';
+      return;
+    }
+
+    // Navigate to Obligate login page.
+    window.location.href = d.data.authorizeUrl;
+  } catch (err) {
+    errEl.textContent = 'Connection failed: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in with SSO';
+  }
+}
 
 async function doLogin() {
   const server = document.getElementById('inp-server').value.trim().replace(/\/$/, '');
@@ -813,6 +896,8 @@ function esc(s) {
   }
   // Show login screen.
   document.getElementById('login-overlay').style.display = 'flex';
+  // Check SSO availability for current server.
+  if (cfg.serverUrl) checkSso();
 })();
 </script>
 </body>

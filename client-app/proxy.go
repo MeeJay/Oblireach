@@ -73,24 +73,35 @@ func (s *SessionStore) clear() {
 	s.save()
 }
 
+// ── SSO state ─────────────────────────────────────────────────────────────────
+
+type pendingSso struct {
+	requestID string
+	state     string
+}
+
 // ── Proxy ─────────────────────────────────────────────────────────────────────
 
 type Proxy struct {
 	cfg     *Config
 	session *SessionStore
 	mux     *http.ServeMux
+	sso     *pendingSso // current desktop SSO flow (single-user app)
+	port    int         // local server port (for SSO callback URL)
 }
 
-func newProxy(cfg *Config, cfgDir string) *Proxy {
+func newProxy(cfg *Config, cfgDir string, port int) *Proxy {
 	p := &Proxy{
 		cfg:     cfg,
 		session: loadSession(filepath.Join(cfgDir, "session.json")),
+		port:    port,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", p.handleUI)
 	mux.HandleFunc("/proxy/", p.handleProxy)
 	mux.HandleFunc("/local/config", p.handleConfig)
 	mux.HandleFunc("/local/logout", p.handleLogout)
+	mux.HandleFunc("/sso/callback", p.handleSsoCallback)
 	p.mux = mux
 	return p
 }
@@ -133,9 +144,10 @@ func (p *Proxy) handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"serverUrl":          p.cfg.ServerURL,
-		"username":           p.cfg.Username,
-		"hasSession":         p.session.hasCookies(),
+		"serverUrl":  p.cfg.ServerURL,
+		"username":   p.cfg.Username,
+		"hasSession": p.session.hasCookies(),
+		"localPort":  p.port,
 	})
 }
 
@@ -154,6 +166,102 @@ func (p *Proxy) handleLogout(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// handleSsoCallback handles the OAuth redirect from Obligate back to the local app.
+// GET /sso/callback?code=xxx&state=yyy
+func (p *Proxy) handleSsoCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	if code == "" || state == "" || p.sso == nil {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<!DOCTYPE html><html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2>SSO Failed</h2><p>Missing code or state parameter.</p><p><a href="/" style="color:#58a6ff">Back to login</a></p></div></body></html>`)
+		return
+	}
+
+	// Exchange code+state via Obliance desktop-complete endpoint.
+	body, _ := json.Marshal(map[string]string{
+		"requestId": p.sso.requestID,
+		"code":      code,
+		"state":     state,
+	})
+	p.sso = nil // single-use
+
+	req, _ := http.NewRequest("POST", p.cfg.ServerURL+"/api/auth/sso-desktop-complete", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	p.session.inject(req)
+
+	client := &http.Client{Timeout: 15000000000} // 15s
+	resp, err := client.Do(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<!DOCTYPE html><html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2>SSO Failed</h2><p>%s</p><p><a href="/" style="color:#58a6ff">Back to login</a></p></div></body></html>`, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	// Capture session cookies from Obliance response.
+	if cookies := resp.Cookies(); len(cookies) > 0 {
+		p.session.setCookies(cookies)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<!DOCTYPE html><html><body style="background:#0d1117;color:#f85149;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2>SSO Failed</h2><p>%s</p><p><a href="/" style="color:#58a6ff">Back to login</a></p></div></body></html>`, string(respBody))
+		return
+	}
+
+	// Success — redirect to local UI.
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=/"><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d1117;color:#8b949e;font-family:sans-serif}.s{text-align:center}.d{width:28px;height:28px;border:2.5px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:r .6s linear infinite;margin:0 auto 14px}@keyframes r{to{transform:rotate(360deg)}}</style></head><body><div class="s"><div class="d"></div><div>Signing in…</div></div></body></html>`)
+}
+
+// handleSsoInit is called from the proxy to start the desktop SSO flow.
+// POST /proxy/api/auth/sso-desktop-init — intercepts to store the requestId locally.
+func (p *Proxy) startSsoFlow(w http.ResponseWriter, r *http.Request) {
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/sso/callback", p.port)
+
+	body, _ := json.Marshal(map[string]string{"localCallbackUrl": callbackURL})
+	req, _ := http.NewRequest("POST", p.cfg.ServerURL+"/api/auth/sso-desktop-init", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	p.session.inject(req)
+
+	client := &http.Client{Timeout: 10000000000}
+	resp, err := client.Do(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, fmt.Sprintf(`{"success":false,"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Capture session cookies.
+	if cookies := resp.Cookies(); len(cookies) > 0 {
+		p.session.setCookies(cookies)
+	}
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// Parse response to extract requestId.
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			RequestID    string `json:"requestId"`
+			AuthorizeURL string `json:"authorizeUrl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err == nil && result.Success {
+		p.sso = &pendingSso{
+			requestID: result.Data.RequestID,
+			state:     "", // state is managed server-side
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+}
+
 // handleProxy reverse-proxies /proxy/<path> → <serverUrl>/<path>.
 func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 	serverURL := p.cfg.ServerURL
@@ -169,8 +277,15 @@ func (p *Proxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Intercept desktop SSO init to store requestId locally.
+	path := strings.TrimPrefix(r.URL.Path, "/proxy")
+	if path == "/api/auth/sso-desktop-init" && r.Method == http.MethodPost {
+		p.startSsoFlow(w, r)
+		return
+	}
+
 	// Strip /proxy prefix to get the real path.
-	r.URL.Path = strings.TrimPrefix(r.URL.Path, "/proxy")
+	r.URL.Path = path
 	r.URL.Host = target.Host
 	r.URL.Scheme = target.Scheme
 	r.RequestURI = ""

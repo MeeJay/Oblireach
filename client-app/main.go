@@ -75,7 +75,7 @@ func main() {
 	port := ln.Addr().(*net.TCPAddr).Port
 	localBase := fmt.Sprintf("http://127.0.0.1:%d", port)
 
-	proxy := newProxy(cfg, configDir)
+	proxy := newProxy(cfg, configDir, port)
 	go func() {
 		if err := http.Serve(ln, proxy); err != nil && !strings.Contains(err.Error(), "use of closed") {
 			log.Printf("proxy: %v", err)
