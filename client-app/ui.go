@@ -239,7 +239,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
     </div>
     <div id="sso-login-fields" style="display:none">
       <div class="err-msg" id="sso-err"></div>
-      <button class="btn-primary" id="btn-sso" style="background:#7c3aed">Sign in with SSO</button>
+      <button class="btn-primary" id="btn-sso" style="background:#534AB7;width:100%%">Sign in with SSO</button>
       <button style="background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:10px;padding:7px;font-size:11px;cursor:pointer;margin-top:4px;width:100%%" id="btn-local-fallback">Use local login instead</button>
     </div>
   </div>
