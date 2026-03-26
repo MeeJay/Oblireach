@@ -302,6 +302,7 @@ func runHelperMode(addr string) {
 	inputCh := make(chan []byte, 64)
 	codecCh := make(chan string, 4)
 	monitorCh := make(chan int, 4)
+	blockCh := make(chan bool, 4) // input block requests (must run on main thread)
 
 	// ── Reader goroutine: input / stop from service ───────────────────────────
 	go func() {
@@ -332,9 +333,7 @@ func runHelperMode(addr string) {
 						select { case monitorCh <- peek.Index: default: }
 						continue
 					case "set_input_block":
-						inputBlock(peek.Block)
-						confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": peek.Block})
-						_ = pipeSend(conn, pipeTypeControl, confirm)
+						select { case blockCh <- peek.Block: default: }
 						continue
 					}
 				}
@@ -383,6 +382,13 @@ func runHelperMode(addr string) {
 		select {
 		case <-stopCh:
 			return
+
+		case block := <-blockCh:
+			// BlockInput must run on the same OS thread as SendInput,
+			// otherwise SendInput is also blocked (Windows restriction).
+			inputBlock(block)
+			confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
+			_ = pipeSend(conn, pipeTypeControl, confirm)
 
 		case payload, ok := <-inputCh:
 			if !ok {

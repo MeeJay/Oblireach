@@ -160,8 +160,22 @@ func startStream(cfg *Config, token string, sessionID int) error {
 	}
 
 	// Cross-session on Windows: spawn capture helper.
-	if runtime.GOOS == "windows" && targetSession != currentSessionID() {
-		return startCrossSessionStream(cfg, token, targetSession)
+	// Always use cross-session when running as a service (session 0),
+	// even if the target is also session 0 — session 0 has no display,
+	// so the helper must run in an interactive session for capture to work.
+	if runtime.GOOS == "windows" {
+		mySession := currentSessionID()
+		if targetSession != mySession || mySession == 0 {
+			// If target is session 0 (fallback), try the console session
+			// which exists even at the login screen (Winlogon desktop).
+			if targetSession == 0 {
+				consoleID := consoleSessionID()
+				if uint32(consoleID) != 0xFFFFFFFF {
+					targetSession = consoleID
+				}
+			}
+			return startCrossSessionStream(cfg, token, targetSession)
+		}
 	}
 
 	// Direct capture path (same session or non-Windows).
@@ -317,6 +331,7 @@ func (s *StreamSession) run() {
 	inputCh := make(chan []byte, 64)
 	codecCh := make(chan string, 4)
 	monitorCh := make(chan int, 4) // monitor switch requests
+	blockCh := make(chan bool, 4)  // input block requests (must run on main thread)
 	go func() {
 		defer s.stop()
 		for {
@@ -345,9 +360,7 @@ func (s *StreamSession) run() {
 						select { case monitorCh <- peek.Index: default: }
 						continue
 					case "set_input_block":
-						inputBlock(peek.Block)
-						confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": peek.Block})
-						_ = s.ws.WriteFrame(0x1, confirm)
+						select { case blockCh <- peek.Block: default: }
 						continue
 					case "clipboard_set":
 						// Browser → agent: set clipboard content
@@ -441,6 +454,13 @@ func (s *StreamSession) run() {
 			timeoutMsg, _ := json.Marshal(map[string]string{"type": "inactivity_timeout"})
 			_ = s.ws.WriteFrame(0x1, timeoutMsg)
 			return
+
+		case block := <-blockCh:
+			// BlockInput must run on the same OS thread as SendInput,
+			// otherwise SendInput is also blocked (Windows restriction).
+			inputBlock(block)
+			confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
+			_ = s.ws.WriteFrame(0x1, confirm)
 
 		case payload := <-inputCh:
 			resetIdleTimer()
