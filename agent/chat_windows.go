@@ -39,9 +39,13 @@ func chatIsFrench() bool {
 }
 
 var (
-	chatProcCreateRoundRgn = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateRoundRectRgn")
+	chatGdi32              = syscall.NewLazyDLL("gdi32.dll")
+	chatProcCreateRoundRgn = chatGdi32.NewProc("CreateRoundRectRgn")
+	chatProcCreateBrush    = chatGdi32.NewProc("CreateSolidBrush")
 	chatProcSetWindowRgn   = chatUser32.NewProc("SetWindowRgn")
 	chatProcShowWindow     = chatUser32.NewProc("ShowWindow")
+	chatProcSetClassLongW  = chatUser32.NewProc("SetClassLongPtrW")
+	chatProcSendMessageW   = chatUser32.NewProc("SendMessageW")
 )
 
 func chatMakePopup(title string) {
@@ -58,11 +62,22 @@ func chatMakePopup(title string) {
 	}
 	if hwnd == 0 { return }
 
-	// Hide immediately so the user never sees the unstyled window
-	chatProcShowWindow.Call(hwnd, 0) // SW_HIDE
+	// Move off-screen immediately — faster than SW_HIDE, prevents any flash
+	// at the default position (top-left). SWP_NOZORDER|SWP_NOACTIVATE = 0x0014
+	chatProcSetWindowPos.Call(hwnd, 0,
+		uintptr(0), uintptr(0), 0, 0, 0x0014|0x0001|0x0080) // NOSIZE|NOCOPYBITS
+	chatProcShowWindow.Call(hwnd, 0) // SW_HIDE (belt and suspenders)
 
 	const gwlStyle = ^uintptr(15)   // GWL_STYLE = -16
 	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE = -20
+
+	// Change the window class background brush from white to dark (#0d1117)
+	// This eliminates the white border around the WebView2 content.
+	// COLORREF = 0x00BBGGRR → #0d1117 = R:0x0D G:0x11 B:0x17 = 0x0017110D
+	darkBrush, _, _ := chatProcCreateBrush.Call(0x0017110D)
+	if darkBrush != 0 {
+		chatProcSetClassLongW.Call(hwnd, ^uintptr(9), darkBrush) // GCLP_HBRBACKGROUND = -10
+	}
 
 	// Remove titlebar — WS_POPUP | WS_VISIBLE
 	chatProcSetWindowLongPtrW.Call(hwnd, gwlStyle, 0x80000000|0x10000000)
@@ -81,16 +96,18 @@ func chatMakePopup(title string) {
 		chatProcSetWindowRgn.Call(hwnd, rgn, 1) // bRedraw=TRUE
 	}
 
-	// Position bottom-right
+	// Position bottom-right with SWP_FRAMECHANGED to force WebView2 to
+	// recalculate its layout and fill the full window (fixes white gap on right)
 	var wa chatWinRECT
 	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
 	x := int(wa.Right) - 380 - 16
 	y := int(wa.Bottom) - 520 - 16
 	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
-		uintptr(x), uintptr(y), 380, 520, 0x0040)
+		uintptr(x), uintptr(y), 380, 520, 0x0020|0x0040) // SWP_FRAMECHANGED|SWP_SHOWWINDOW
 
-	// Show the fully styled window
-	chatProcShowWindow.Call(hwnd, 8) // SW_SHOWNA (show without activating)
+	// Force WebView2 to resize its content to match the window
+	// WM_SIZE=0x0005, wParam=0 (SIZE_RESTORED), lParam=MAKELPARAM(380,520)
+	chatProcSendMessageW.Call(hwnd, 0x0005, 0, uintptr(520<<16|380))
 }
 
 var chatConn net.Conn
@@ -378,7 +395,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 ::-webkit-scrollbar-track{background:transparent}
 
 /* ── Full chat view ── */
-.chat-container{display:flex;flex-direction:column;height:100vh;border-radius:18px;overflow:hidden;background:#0d1117}
+.chat-container{display:flex;flex-direction:column;height:100vh;overflow:hidden;background:#0d1117}
 .header{background:#161b22;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06);-webkit-app-region:drag}
 .header button{-webkit-app-region:no-drag;background:transparent;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:6px}
 .header button:hover{background:rgba(255,255,255,0.08)}
