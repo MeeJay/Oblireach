@@ -190,6 +190,10 @@ func handleCommand(cfg *Config, cmd *command) {
 		message := payloadString(cmd.Payload, "message")
 		forwardRemoteRequest(chatID, message)
 
+	case "chat_typing":
+		chatID := payloadString(cmd.Payload, "chatId")
+		forwardChatTyping(chatID)
+
 	case "chat_file":
 		chatID := payloadString(cmd.Payload, "chatId")
 		forwardChatFile(chatID, cmd.Payload)

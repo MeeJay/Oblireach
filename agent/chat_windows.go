@@ -345,6 +345,16 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	w.Bind("goDenyRemote", func() {
 		goChatSend("deny_remote", "")
 	})
+	w.Bind("goTyping", func() {
+		// Send typing event to service → server → operator
+		chatConnMu.Lock()
+		conn := chatConn
+		chatConnMu.Unlock()
+		if conn != nil {
+			msg, _ := json.Marshal(map[string]string{"action": "typing"})
+			chatPipeSend(conn, chatPipeEvent, msg)
+		}
+	})
 
 	w.SetHtml(html)
 
@@ -385,6 +395,10 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 					jsMsg := strings.ReplaceAll(msg.Message, `'`, `\'`)
 					w.Dispatch(func() {
 						w.Eval(fmt.Sprintf(`showRemoteRequest('%s')`, jsMsg))
+					})
+				case "operator_typing":
+					w.Dispatch(func() {
+						w.Eval(`showTyping()`)
 					})
 				case "file_transfer":
 					w.Dispatch(func() {
@@ -458,6 +472,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bubble-btn:hover{background:#a80018}
 .bubble-btn svg{width:24px;height:24px}
 .unread-badge{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;border-radius:9px;background:#ef4444;color:white;font-size:10px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px}
+/* ── Typing indicator ── */
+.typing-row{display:flex;gap:8px;align-items:flex-end;display:none}
+.typing-row.visible{display:flex}
+.typing-dots{display:flex;gap:3px;padding:10px 14px;background:rgba(194,0,27,0.12);border:1px solid rgba(194,0,27,0.2);border-radius:14px 14px 14px 2px}
+.typing-dots span{width:6px;height:6px;border-radius:50%%;background:#8b949e;animation:typeBounce 1.2s infinite}
+.typing-dots span:nth-child(2){animation-delay:0.2s}
+.typing-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes typeBounce{0%%,60%%,100%%{transform:translateY(0);opacity:0.4}30%%{transform:translateY(-4px);opacity:1}}
+
 body.minimized .chat-container{display:none}
 body.minimized .bubble-btn{display:flex}
 </style>
@@ -491,7 +514,12 @@ body.minimized .bubble-btn{display:flex}
       </button>
     </div>
   </div>
-  <div class="messages" id="messages"></div>
+  <div class="messages" id="messages">
+    <div class="typing-row" id="typing-row">
+      <div class="avatar op" style="width:28px;height:28px;border-radius:50%%;display:flex;align-items:center;justify-content:center">%s</div>
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+    </div>
+  </div>
   <div id="remote-panel" style="display:none;padding:0 12px">
     <div class="remote-panel">
       <p id="remote-msg">` + i18n["remoteRequested"] + `</p>
@@ -501,7 +529,7 @@ body.minimized .bubble-btn{display:flex}
   </div>
   <div class="input-area">
     <div class="input-row">
-      <input id="input" type="text" placeholder="` + i18n["yourMessage"] + `" onkeydown="if(event.key==='Enter')sendMsg()" />
+      <input id="input" type="text" placeholder="` + i18n["yourMessage"] + `" onkeydown="if(event.key==='Enter')sendMsg()" oninput="emitTyping()" />
       <button class="send-btn" onclick="sendMsg()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -513,6 +541,8 @@ const opAvatarSmall = '%s';
 const userInitials = '%s';
 let isMinimized = false;
 let unreadCount = 0;
+let typingTimer = null;
+let lastTypingEmit = 0;
 
 function sendMsg() {
   const inp = document.getElementById('input');
@@ -522,8 +552,35 @@ function sendMsg() {
   goSendMessage(text);
 }
 
-function addMessage(text, initials, isOp) {
+// Typing indicator: show operator typing animation (3s timeout)
+function showTyping() {
+  const el = document.getElementById('typing-row');
+  el.classList.add('visible');
   const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(function() { el.classList.remove('visible'); }, 3000);
+}
+
+function hideTyping() {
+  clearTimeout(typingTimer);
+  document.getElementById('typing-row').classList.remove('visible');
+}
+
+// Emit user typing to operator (debounced: max 1 per 2s)
+function emitTyping() {
+  const now = Date.now();
+  if (now - lastTypingEmit < 2000) return;
+  lastTypingEmit = now;
+  goTyping();
+}
+
+function addMessage(text, initials, isOp) {
+  // Hide typing indicator when a real message arrives from operator
+  if (isOp) hideTyping();
+
+  const msgs = document.getElementById('messages');
+  const typingEl = document.getElementById('typing-row');
   const row = document.createElement('div');
   row.className = 'msg-row ' + (isOp ? '' : 'user');
   if (isOp) {
@@ -533,7 +590,8 @@ function addMessage(text, initials, isOp) {
     row.innerHTML = '<div class="bubble user">' + escHtml(text) + '</div>' +
       '<div class="avatar user"><span>' + (initials || userInitials) + '</span></div>';
   }
-  msgs.appendChild(row);
+  // Insert before the typing row so it stays at the bottom
+  msgs.insertBefore(row, typingEl);
   msgs.scrollTop = msgs.scrollHeight;
 
   // Auto-restore chat when operator sends a message while minimized
@@ -599,5 +657,5 @@ function escHtml(s) {
 }
 </script>
 </body></html>`,
-		avatarHTML, smallAvatarHTML, userInitials)
+		avatarHTML, smallAvatarHTML, smallAvatarHTML, userInitials)
 }

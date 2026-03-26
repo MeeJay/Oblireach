@@ -130,6 +130,13 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .chat-msg.user .bubble{background:var(--bg3);color:white;border-bottom-right-radius:4px}
 .chat-msg.sys{align-self:center;max-width:100%%}
 .chat-msg.sys .bubble{background:rgba(250,204,21,.1);color:rgba(250,204,21,.8);font-size:11px;padding:4px 12px;border-radius:20px}
+.chat-typing{display:none;align-self:flex-start;gap:8px;align-items:flex-end;padding:0 2px}
+.chat-typing.visible{display:flex}
+.chat-typing-dots{display:flex;gap:3px;padding:8px 14px;background:var(--accent);border-radius:16px 16px 16px 4px}
+.chat-typing-dots span{width:5px;height:5px;border-radius:50%%;background:rgba(255,255,255,.5);animation:chatTypeBounce 1.2s infinite}
+.chat-typing-dots span:nth-child(2){animation-delay:.2s}
+.chat-typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes chatTypeBounce{0%%,60%%,100%%{transform:translateY(0);opacity:.4}30%%{transform:translateY(-3px);opacity:1}}
 .chat-time{text-align:center;padding:4px 0}
 .chat-time span{font-size:10px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 10px;border-radius:20px}
 .chat-input-area{padding:10px 14px;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
@@ -291,7 +298,12 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-typing" id="chat-typing">
+          <div style="width:28px;height:28px;border-radius:50%%;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;color:var(--muted)">...</div>
+          <div class="chat-typing-dots"><span></span><span></span><span></span></div>
+        </div>
+      </div>
       <div class="chat-input-area">
         <div id="chat-request-btn-wrap"></div>
         <div class="chat-input-row">
@@ -327,6 +339,8 @@ let chatConnected = false;
 let chatUserClosed = false;
 let currentOperatorName = '';
 let currentOperatorAvatar = '';
+let chatTypingTimer = null;
+let lastChatTypingEmit = 0;
 
 // Performance HUD state
 let perfHudVisible = false;
@@ -1526,6 +1540,7 @@ function initSocketIO() {
     chatSocket.on('chat:message', onChatMessage);
     chatSocket.on('chat:closed', onChatClosed);
     chatSocket.on('chat:remote_response', onChatRemoteResponse);
+    chatSocket.on('chat:typing', onChatTyping);
   };
   s.onerror = () => { console.warn('socket.io client not available'); };
   document.head.appendChild(s);
@@ -1535,6 +1550,7 @@ document.getElementById('btn-chat').addEventListener('click', toggleChat);
 document.getElementById('btn-chat-close').addEventListener('click', () => toggleChat(false));
 document.getElementById('chat-send').addEventListener('click', sendChatMessage);
 document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChatMessage(); });
+document.getElementById('chat-input').addEventListener('input', emitChatTyping);
 
 function toggleChat(forceOpen) {
   const panel = document.getElementById('chat-panel');
@@ -1641,7 +1657,8 @@ function renderChatMsg(msg) {
         '<div style="width:28px;height:28px;border-radius:50%%;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;color:var(--muted);margin-top:auto">' + initials + '</div>';
     }
   }
-  container.appendChild(div);
+  const typingEl = document.getElementById('chat-typing');
+  if (typingEl) { container.insertBefore(div, typingEl); } else { container.appendChild(div); }
   container.scrollTop = container.scrollHeight;
 }
 
@@ -1658,6 +1675,7 @@ function sendChatMessage() {
 
 function onChatMessage(data) {
   if (data.chatId !== chatId) return;
+  hideChatTyping();
   addChatMsg(data.sender, data.message, false);
   if (chatUserClosed) chatUserClosed = false;
   // Show badge if panel is closed
@@ -1681,6 +1699,32 @@ function onChatRemoteResponse(data) {
   if (data.chatId !== chatId) return;
   addChatMsg('System', data.allowed ? 'Remote control access granted.' : 'Remote control access denied.', true);
   renderRequestRemoteBtn();
+}
+
+function onChatTyping(data) {
+  if (data.chatId !== chatId) return;
+  const el = document.getElementById('chat-typing');
+  if (!el) return;
+  el.classList.add('visible');
+  const container = document.getElementById('chat-messages');
+  if (container) container.scrollTop = container.scrollHeight;
+  clearTimeout(chatTypingTimer);
+  chatTypingTimer = setTimeout(function() { el.classList.remove('visible'); }, 3000);
+}
+
+function hideChatTyping() {
+  clearTimeout(chatTypingTimer);
+  const el = document.getElementById('chat-typing');
+  if (el) el.classList.remove('visible');
+}
+
+function emitChatTyping() {
+  const now = Date.now();
+  if (now - lastChatTypingEmit < 2000) return;
+  lastChatTypingEmit = now;
+  if (chatSocket && chatId) {
+    chatSocket.emit('chat:typing', { chatId });
+  }
 }
 
 function renderRequestRemoteBtn() {

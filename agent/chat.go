@@ -190,6 +190,20 @@ func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
 	}()
 }
 
+func forwardChatTyping(chatID string) {
+	v, ok := activeChats.Load(chatID)
+	if !ok {
+		return
+	}
+	cs := v.(*ChatSession)
+	if cs.conn == nil {
+		return
+	}
+
+	msg, _ := json.Marshal(map[string]string{"action": "operator_typing"})
+	chatPipeSend(cs.conn, chatPipeMsg, msg)
+}
+
 func forwardChatFile(chatID string, payload map[string]interface{}) {
 	v, ok := activeChats.Load(chatID)
 	if !ok {
