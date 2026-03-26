@@ -157,7 +157,11 @@ static int clipboard_set_text(const char *utf8) {
 }
 */
 import "C"
-import "unsafe"
+
+import (
+	"syscall"
+	"unsafe"
+)
 
 // Cached virtual screen dimensions — refreshed once when monitor offset changes.
 // Avoids calling GetSystemMetrics on every mouse move (slow on RDP servers).
@@ -219,6 +223,16 @@ func inputKey(vk int, down bool) {
 	d := C.int(0)
 	if down { d = 1 }
 	C.send_key(C.int(vk), d)
+}
+
+// inputSAS sends a Secure Attention Sequence (Ctrl+Alt+Del).
+// Requires the process to run as SYSTEM (service or helper spawned with SYSTEM token).
+func inputSAS() {
+	dll := syscall.NewLazyDLL("sas.dll")
+	proc := dll.NewProc("SendSAS")
+	if proc.Find() == nil {
+		proc.Call(0) // FALSE = software SAS
+	}
 }
 
 // inputVKFromKey converts a browser e.key string (single character) to

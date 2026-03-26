@@ -712,6 +712,10 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 			inputKey(vk, down)
 		}
 
+	case "sas":
+		// Secure Attention Sequence (Ctrl+Alt+Del)
+		inputSAS()
+
 	case "resize_viewport":
 		// No action needed — we capture at native resolution
 	}

@@ -187,6 +187,9 @@ func main() {
 	log.Printf("Oblireach Agent v%s starting (uuid=%s server=%s)",
 		agentVersion, cfg.DeviceUUID, cfg.ServerURL)
 
+	// Write version file so the Obliance tray can read it.
+	_ = os.WriteFile(filepath.Join(configDir, "version.txt"), []byte(agentVersion), 0644)
+
 	runFn := func() { runCmdWS(cfg) }
 
 	// Try to run as a Windows service first; fall back to interactive mode.

@@ -109,6 +109,8 @@ func inputKey(vk int, down bool) {
 	C.lx_key(C.uint(ks), d)
 }
 
+func inputSAS() {} // not applicable on Linux
+
 func inputVKFromKey(key string) (int, int) {
 	runes := []rune(key)
 	if len(runes) != 1 {

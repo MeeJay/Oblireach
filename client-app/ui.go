@@ -16,11 +16,11 @@ func buildUI(cfg *Config) string {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#1a0a0c;--bg2:#200d10;--bg3:#3a1015;--bg4:#250a0e;
-  --border:rgba(255,255,255,.08);--border2:rgba(255,255,255,.12);
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--bg4:#1c2128;
+  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.10);
   --accent:#c2001b;--accent-h:#a80018;--accent-l:#e84050;
-  --input-bg:#1a1640;--input-border:rgba(255,255,255,.1);
-  --text:#f1f5f9;--muted:#9ca3af;--muted2:#6b7280;
+  --input-bg:#0d1117;--input-border:rgba(255,255,255,.1);
+  --text:#e6edf3;--muted:#8b949e;--muted2:#484f58;
   --success:#4ade80;--danger:#ef4444;--warn:#f59e0b;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 }
@@ -31,12 +31,12 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.15)}
 
 /* ── Top bar ── */
-.topbar{height:44px;background:linear-gradient(90deg,#200d10,#250a0e);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0}
+.topbar{height:44px;background:linear-gradient(90deg,#161b22,#1c2128);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0}
 .topbar .logo{font-weight:700;font-size:15px;color:var(--accent-l);letter-spacing:.5px;margin-right:auto;display:flex;align-items:center;gap:6px}
 .topbar .logo svg{width:20px;height:20px}
 .topbar .server-info{font-size:11px;color:var(--muted2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .btn-sm{padding:5px 12px;border-radius:10px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--muted);font-size:11px;cursor:pointer;transition:all .15s}
-.btn-sm:hover{background:rgba(194,0,27,.15);color:var(--accent-l);border-color:rgba(194,0,27,.3)}
+.btn-sm:hover{background:rgba(255,255,255,.08);color:var(--text);border-color:rgba(255,255,255,.15)}
 .main{display:flex;flex:1;overflow:hidden}
 
 /* ── Sidebar ── */
@@ -47,8 +47,8 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .sidebar-body{flex:1;overflow-y:auto;padding:4px 0}
 .group-label{padding:8px 14px 4px;font-size:10px;font-weight:600;color:var(--muted2);text-transform:uppercase;letter-spacing:.8px}
 .device-row{padding:7px 14px 7px 22px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-radius:0;transition:all .1s;margin:1px 6px;border-radius:8px}
-.device-row:hover{background:rgba(194,0,27,.08)}
-.device-row.active{background:rgba(194,0,27,.15);color:var(--accent-l)}
+.device-row:hover{background:rgba(255,255,255,.04)}
+.device-row.active{background:rgba(194,0,27,.12);color:var(--accent-l)}
 .dot{width:7px;height:7px;border-radius:50%%;flex-shrink:0}
 .dot.online{background:var(--success)}
 .dot.offline{background:var(--muted2)}
@@ -58,7 +58,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .content{flex:1;display:flex;flex-direction:column;overflow:hidden}
 
 /* ── Login ── */
-#login-overlay{position:fixed;inset:0;background:linear-gradient(180deg,#1a0a0c 0%%,#200d10 100%%);display:flex;align-items:center;justify-content:center;z-index:100}
+#login-overlay{position:fixed;inset:0;background:linear-gradient(180deg,#0d1117 0%%,#161b22 100%%);display:flex;align-items:center;justify-content:center;z-index:100}
 .login-box{background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:36px;width:400px;display:flex;flex-direction:column;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .login-box h2{font-size:22px;font-weight:700;text-align:center;color:var(--accent-l);display:flex;align-items:center;justify-content:center;gap:8px}
 .login-box h2 svg{width:24px;height:24px}
@@ -85,7 +85,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 #remote-pane{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .remote-toolbar{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:var(--bg2)}
 .session-select{background:var(--input-bg);border:1px solid var(--input-border);border-radius:8px;padding:5px 8px;font-size:11px;color:var(--text);outline:none;cursor:pointer}
-.remote-viewport{flex:1;background:#0a0405;position:relative;overflow:hidden}
+.remote-viewport{flex:1;background:#010409;position:relative;overflow:hidden}
 #remote-canvas{width:100%%;height:100%%;object-fit:contain;display:block}
 .remote-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted2);font-size:13px}
 
@@ -93,14 +93,14 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 #scripts-pane{flex:1;display:flex;overflow:hidden}
 .scripts-list{width:220px;border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;background:var(--bg2)}
 .script-item{padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);transition:all .1s}
-.script-item:hover{background:rgba(194,0,27,.08)}
-.script-item.active{background:rgba(194,0,27,.15);color:var(--accent-l)}
+.script-item:hover{background:rgba(255,255,255,.04)}
+.script-item.active{background:rgba(194,0,27,.12);color:var(--accent-l)}
 .script-item .sname{font-weight:500}
 .script-item .sdesc{font-size:10px;color:var(--muted2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .script-detail{flex:1;padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
 .script-detail h3{font-size:13px;font-weight:600}
 .script-code{background:var(--bg4);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:monospace;font-size:11px;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--text)}
-.exec-output{background:#0a0405;border:1px solid var(--border);border-radius:10px;padding:12px;font-family:monospace;font-size:11px;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--success);min-height:60px}
+.exec-output{background:#010409;border:1px solid var(--border);border-radius:10px;padding:12px;font-family:monospace;font-size:11px;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:var(--success);min-height:60px}
 .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:500}
 .badge.windows{background:rgba(96,165,250,.12);color:#60a5fa}
 .badge.linux{background:rgba(74,222,128,.12);color:#4ade80}
@@ -113,7 +113,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .status-bar{padding:4px 14px;font-size:10px;color:var(--muted2);border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
 
 /* ── Chat panel ── */
-.chat-panel{width:0;overflow:hidden;transition:width .25s ease;border-left:1px solid var(--border);display:flex;flex-direction:column;background:linear-gradient(180deg,#1a0a0c 0%%,#200d10 100%%);flex-shrink:0}
+.chat-panel{width:0;overflow:hidden;transition:width .25s ease;border-left:1px solid var(--border);display:flex;flex-direction:column;background:linear-gradient(180deg,#0d1117 0%%,#161b22 100%%);flex-shrink:0}
 .chat-panel.open{width:360px}
 .chat-header{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
 .chat-header .avatar{width:36px;height:36px;border-radius:50%%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -131,7 +131,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .chat-msg.sys{align-self:center;max-width:100%%}
 .chat-msg.sys .bubble{background:rgba(250,204,21,.1);color:rgba(250,204,21,.8);font-size:11px;padding:4px 12px;border-radius:20px}
 .chat-time{text-align:center;padding:4px 0}
-.chat-time span{font-size:10px;color:rgba(194,0,27,.5);background:rgba(194,0,27,.08);padding:2px 10px;border-radius:20px}
+.chat-time span{font-size:10px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 10px;border-radius:20px}
 .chat-input-area{padding:10px 14px;flex-shrink:0;display:flex;flex-direction:column;gap:8px}
 .chat-input-row{display:flex;align-items:center;gap:8px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:16px;padding:4px 6px 4px 14px}
 .chat-input-row input{flex:1;background:transparent;border:none;outline:none;font-size:13px;color:white}
@@ -142,6 +142,66 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .chat-send-btn svg{width:14px;height:14px;color:white}
 .chat-toggle{position:relative}
 .chat-toggle .badge-dot{position:absolute;top:-2px;right:-2px;width:8px;height:8px;border-radius:50%%;background:var(--accent);display:none}
+
+/* ── Toolbar extras ── */
+.toolbar-sep{width:1px;height:20px;background:var(--border2);flex-shrink:0}
+.toolbar-dropdown{position:relative;display:inline-block}
+.toolbar-dropdown-menu{display:none;position:absolute;top:100%%;left:0;margin-top:4px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:4px;min-width:160px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toolbar-dropdown-menu.open{display:block}
+.toolbar-dropdown-menu button{display:block;width:100%%;text-align:left;padding:6px 10px;font-size:11px;color:var(--text);background:none;border:none;border-radius:6px;cursor:pointer;white-space:nowrap}
+.toolbar-dropdown-menu button:hover{background:rgba(255,255,255,.06)}
+
+/* ── Performance HUD ── */
+.perf-hud{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:6px 10px;font-family:monospace;font-size:11px;color:#4ade80;z-index:20;pointer-events:none;display:none;line-height:1.6}
+.perf-hud.visible{display:block}
+.perf-hud .hud-row{display:flex;gap:8px}
+.perf-hud .hud-label{color:var(--muted);min-width:48px}
+.perf-hud .hud-val{font-weight:600}
+.perf-hud .hud-warn{color:#f59e0b}
+.perf-hud .hud-bad{color:#ef4444}
+
+/* ── Recording indicator ── */
+.rec-indicator{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.7);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:5px 10px;font-size:11px;color:#ef4444;z-index:20;display:none;align-items:center;gap:6px;font-weight:600}
+.rec-indicator.active{display:flex}
+.rec-dot{width:8px;height:8px;border-radius:50%%;background:#ef4444;animation:rec-pulse 1s ease-in-out infinite}
+@keyframes rec-pulse{0%%,100%%{opacity:1}50%%{opacity:.3}}
+
+/* ── Annotation overlay ── */
+.annotation-overlay{position:absolute;inset:0;z-index:15;cursor:crosshair;display:none}
+.annotation-overlay.active{display:block}
+.annotation-toolbar{position:absolute;bottom:12px;left:50%%;transform:translateX(-50%%);background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:4px 6px;display:flex;gap:2px;z-index:16;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.annotation-toolbar button{width:32px;height:32px;border:none;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .1s}
+.annotation-toolbar button:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.annotation-toolbar button.active{background:rgba(194,0,27,.15);color:var(--accent-l)}
+
+/* ── Quick Actions drawer ── */
+.quick-actions{position:absolute;top:0;right:0;bottom:0;width:0;overflow:hidden;transition:width .2s ease;background:var(--bg2);border-left:1px solid var(--border);z-index:25;display:flex;flex-direction:column}
+.quick-actions.open{width:220px}
+.quick-actions-header{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.quick-actions-header span{font-size:12px;font-weight:600;color:var(--text)}
+.quick-actions-body{flex:1;overflow-y:auto;padding:6px}
+.qa-btn{display:flex;align-items:center;gap:8px;width:100%%;padding:8px 10px;border:none;background:none;color:var(--text);font-size:12px;cursor:pointer;border-radius:8px;transition:background .1s;text-align:left}
+.qa-btn:hover{background:rgba(255,255,255,.06)}
+.qa-btn svg{flex-shrink:0;color:var(--muted)}
+
+/* ── Favorites star ── */
+.fav-star{opacity:0;cursor:pointer;color:var(--muted2);transition:all .15s;margin-left:auto;flex-shrink:0;font-size:13px}
+.device-row:hover .fav-star{opacity:1}
+.fav-star.active{opacity:1;color:#f59e0b}
+
+/* ── Multi-tab bar ── */
+.session-tabs{display:flex;align-items:center;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;overflow-x:auto;min-height:0}
+.session-tabs:empty{display:none}
+.session-tab{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:11px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .1s;flex-shrink:0}
+.session-tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.session-tab.active{color:var(--accent-l);border-bottom-color:var(--accent)}
+.session-tab .tab-close{width:14px;height:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;opacity:0;transition:all .1s}
+.session-tab:hover .tab-close{opacity:.6}
+.session-tab .tab-close:hover{opacity:1;background:rgba(255,255,255,.1)}
+
+/* ── Zoom viewport ── */
+.remote-viewport.zoom-scroll{overflow:auto}
+.remote-viewport.zoom-scroll #remote-canvas{object-fit:unset}
 </style>
 </head>
 <body>
@@ -203,12 +263,15 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
       </div>
       <div class="sidebar-body" id="device-tree"></div>
     </div>
-    <div class="content" id="content-area">
-      <div class="empty">
-        <div class="empty-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.3"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div class="session-tabs" id="session-tabs"></div>
+      <div class="content" id="content-area">
+        <div class="empty">
+          <div class="empty-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.3"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <span>Select a device from the list</span>
         </div>
-        <span>Select a device from the list</span>
       </div>
     </div>
     <!-- Chat panel -->
@@ -249,10 +312,12 @@ let overview = { groups: [] };
 let reachScripts = [];
 let selectedDevice = null;
 let activeTab = 'remote';
+let execAbort = null;
+
+// Remote state (active tab)
 let remoteWs = null;
 let remoteDecoder = null;
 let remoteTs = 0;
-let execAbort = null;
 
 // Chat state
 let chatSocket = null;
@@ -261,6 +326,41 @@ let chatMessages = [];
 let chatConnected = false;
 let chatUserClosed = false;
 let currentOperatorName = '';
+
+// Performance HUD state
+let perfHudVisible = false;
+let perfFrameCount = 0;
+let perfByteCount = 0;
+let perfLastTime = performance.now();
+let perfFps = 0;
+let perfBitrate = 0;
+let perfCodec = 'H.264';
+let perfInterval = null;
+
+// Recording state
+let recMediaRecorder = null;
+let recChunks = [];
+let recStartTime = 0;
+let recTimerInterval = null;
+
+// Annotation state
+let annotationActive = false;
+let annotationTool = 'pen';
+let annotationColor = '#ef4444';
+let annotationDrawing = false;
+let annotationHistory = [];
+let annotationCtx = null;
+
+// Zoom state
+let zoomLevel = 'fit';
+
+// Favorites (localStorage)
+let favorites = JSON.parse(localStorage.getItem('oblireach_favorites') || '[]');
+let recents = JSON.parse(localStorage.getItem('oblireach_recents') || '[]');
+
+// Multi-tab sessions
+let sessionTabs = []; // [{id, device, ws, decoder, ts, label}]
+let activeSessionTabId = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -406,11 +506,48 @@ async function loadScripts() {
 }
 function countDevices() { return overview.groups.reduce((n, g) => n + g.devices.length, 0); }
 
+// ── Favorites / Recents ──────────────────────────────────────────────────────
+function toggleFavorite(deviceId) {
+  const idx = favorites.indexOf(deviceId);
+  if (idx >= 0) favorites.splice(idx, 1);
+  else favorites.push(deviceId);
+  localStorage.setItem('oblireach_favorites', JSON.stringify(favorites));
+  renderTree();
+}
+function addRecent(device) {
+  recents = recents.filter(r => r.id !== device.id);
+  recents.unshift({ id: device.id, hostname: device.hostname, ts: Date.now() });
+  if (recents.length > 5) recents = recents.slice(0, 5);
+  localStorage.setItem('oblireach_recents', JSON.stringify(recents));
+}
+
 // ── Device tree ──────────────────────────────────────────────────────────────
 function renderTree() {
   const filter = document.getElementById('search-input').value.toLowerCase();
   const tree = document.getElementById('device-tree');
   tree.innerHTML = '';
+
+  // Collect all devices for favorites/recents lookup
+  const allDevs = [];
+  for (const g of overview.groups) for (const d of g.devices) allDevs.push(d);
+
+  // Favorites group
+  const favDevs = allDevs.filter(d => favorites.includes(d.id) && (!filter || d.hostname.toLowerCase().includes(filter)));
+  if (favDevs.length > 0) {
+    const gl = document.createElement('div'); gl.className = 'group-label'; gl.textContent = '\u2605 Favorites'; tree.appendChild(gl);
+    for (const dev of favDevs) tree.appendChild(createDeviceRow(dev));
+  }
+
+  // Recents group (only if no filter)
+  if (!filter && recents.length > 0) {
+    const recentDevs = recents.map(r => allDevs.find(d => d.id === r.id)).filter(Boolean).filter(d => !favorites.includes(d.id));
+    if (recentDevs.length > 0) {
+      const gl = document.createElement('div'); gl.className = 'group-label'; gl.textContent = 'Recent'; tree.appendChild(gl);
+      for (const dev of recentDevs) tree.appendChild(createDeviceRow(dev));
+    }
+  }
+
+  // Regular groups
   for (const group of overview.groups) {
     const devs = group.devices.filter(d => !filter || d.hostname.toLowerCase().includes(filter));
     if (devs.length === 0) continue;
@@ -418,16 +555,23 @@ function renderTree() {
     gl.className = 'group-label';
     gl.textContent = group.name;
     tree.appendChild(gl);
-    for (const dev of devs) {
-      const row = document.createElement('div');
-      row.className = 'device-row' + (selectedDevice?.id === dev.id ? ' active' : '');
-      const dc = dev.oblireach.online ? 'online' : 'warn';
-      row.innerHTML = '<span class="dot ' + dc + '"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(dev.hostname) + '</span>';
-      row.addEventListener('click', () => selectDevice(dev));
-      tree.appendChild(row);
-    }
+    for (const dev of devs) tree.appendChild(createDeviceRow(dev));
   }
 }
+
+function createDeviceRow(dev) {
+  const row = document.createElement('div');
+  row.className = 'device-row' + (selectedDevice?.id === dev.id ? ' active' : '');
+  const dc = dev.oblireach.online ? 'online' : 'warn';
+  const isFav = favorites.includes(dev.id);
+  row.innerHTML = '<span class="dot ' + dc + '"></span>' +
+    '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(dev.hostname) + '</span>' +
+    '<span class="fav-star ' + (isFav ? 'active' : '') + '" title="Toggle favorite">' + (isFav ? '\u2605' : '\u2606') + '</span>';
+  row.querySelector('.fav-star').addEventListener('click', e => { e.stopPropagation(); toggleFavorite(dev.id); });
+  row.addEventListener('click', () => selectDevice(dev));
+  return row;
+}
+
 document.getElementById('search-input').addEventListener('input', renderTree);
 document.getElementById('btn-refresh').addEventListener('click', async () => {
   await loadOverview();
@@ -436,11 +580,73 @@ document.getElementById('btn-refresh').addEventListener('click', async () => {
   }
 });
 
+// ── Multi-tab sessions ───────────────────────────────────────────────────────
+function renderSessionTabs() {
+  const bar = document.getElementById('session-tabs');
+  bar.innerHTML = '';
+  for (const tab of sessionTabs) {
+    const el = document.createElement('div');
+    el.className = 'session-tab' + (tab.id === activeSessionTabId ? ' active' : '');
+    el.innerHTML = '<span class="dot ' + (tab.ws?.readyState === WebSocket.OPEN ? 'online' : 'offline') + '" style="width:6px;height:6px"></span>' +
+      '<span>' + esc(tab.label) + '</span>' +
+      '<span class="tab-close" title="Close">&times;</span>';
+    el.querySelector('.tab-close').addEventListener('click', e => { e.stopPropagation(); closeSessionTab(tab.id); });
+    el.addEventListener('click', () => switchSessionTab(tab.id));
+    bar.appendChild(el);
+  }
+}
+
+function switchSessionTab(tabId) {
+  activeSessionTabId = tabId;
+  const tab = sessionTabs.find(t => t.id === tabId);
+  if (!tab) return;
+  // Restore device context and re-render
+  selectedDevice = tab.device;
+  remoteWs = tab.ws;
+  remoteDecoder = tab.decoder;
+  remoteTs = tab.ts;
+  renderSessionTabs();
+  renderTree();
+  // Re-render content for this device
+  const area = document.getElementById('content-area');
+  selectDevice(tab.device);
+}
+
+function closeSessionTab(tabId) {
+  const idx = sessionTabs.findIndex(t => t.id === tabId);
+  if (idx < 0) return;
+  const tab = sessionTabs[idx];
+  if (tab.ws) { try { tab.ws.close(); } catch {} }
+  if (tab.decoder) { try { tab.decoder.close(); } catch {} }
+  sessionTabs.splice(idx, 1);
+  if (activeSessionTabId === tabId) {
+    if (sessionTabs.length > 0) {
+      switchSessionTab(sessionTabs[Math.min(idx, sessionTabs.length - 1)].id);
+    } else {
+      activeSessionTabId = null;
+      remoteWs = null; remoteDecoder = null;
+    }
+  }
+  renderSessionTabs();
+}
+
+function addSessionTab(device) {
+  // Check if tab already exists for this device
+  const existing = sessionTabs.find(t => t.device.id === device.id);
+  if (existing) { switchSessionTab(existing.id); return existing; }
+  const tab = { id: 'tab_' + Date.now(), device, ws: null, decoder: null, ts: 0, label: device.hostname };
+  sessionTabs.push(tab);
+  activeSessionTabId = tab.id;
+  renderSessionTabs();
+  return tab;
+}
+
 // ── Device detail ────────────────────────────────────────────────────────────
 function selectDevice(dev) {
   // Close previous chat if switching device
   if (selectedDevice && selectedDevice.id !== dev.id) closeChat();
   selectedDevice = dev;
+  addRecent(dev);
   renderTree();
 
   // Show/hide chat button
@@ -505,6 +711,7 @@ function renderRemoteTab(tc) {
   const pane = document.createElement('div');
   pane.id = 'remote-pane';
 
+  // ── Primary toolbar (connection) ──
   const toolbar = document.createElement('div');
   toolbar.className = 'remote-toolbar';
 
@@ -533,6 +740,102 @@ function renderRemoteTab(tc) {
   stopBtn.addEventListener('click', stopRemote);
   toolbar.appendChild(stopBtn);
 
+  // ── Toolbar separator ──
+  const sep1 = document.createElement('div'); sep1.className = 'toolbar-sep'; toolbar.appendChild(sep1);
+
+  // ── Screenshot button ──
+  const ssBtn = document.createElement('button');
+  ssBtn.className = 'btn-sm'; ssBtn.title = 'Screenshot';
+  ssBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M5 3v2M19 3v2"/></svg>';
+  ssBtn.addEventListener('click', takeScreenshot);
+  toolbar.appendChild(ssBtn);
+
+  // ── Clipboard buttons ──
+  const clipPaste = document.createElement('button');
+  clipPaste.className = 'btn-sm'; clipPaste.title = 'Paste to Remote';
+  clipPaste.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 14l2 2 4-4"/></svg>';
+  clipPaste.addEventListener('click', clipboardPasteToRemote);
+  toolbar.appendChild(clipPaste);
+
+  const clipCopy = document.createElement('button');
+  clipCopy.className = 'btn-sm'; clipCopy.title = 'Copy from Remote';
+  clipCopy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/></svg>';
+  clipCopy.addEventListener('click', clipboardCopyFromRemote);
+  toolbar.appendChild(clipCopy);
+
+  // ── Separator ──
+  const sep2 = document.createElement('div'); sep2.className = 'toolbar-sep'; toolbar.appendChild(sep2);
+
+  // ── Zoom dropdown ──
+  const zoomDrop = document.createElement('div'); zoomDrop.className = 'toolbar-dropdown';
+  const zoomBtn = document.createElement('button');
+  zoomBtn.className = 'btn-sm'; zoomBtn.id = 'zoom-btn'; zoomBtn.textContent = 'Fit';
+  const zoomMenu = document.createElement('div'); zoomMenu.className = 'toolbar-dropdown-menu';
+  ['Fit', '50%%', '75%%', '100%%', '150%%'].forEach(label => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.addEventListener('click', () => { setZoomLevel(label); zoomMenu.classList.remove('open'); });
+    zoomMenu.appendChild(b);
+  });
+  zoomBtn.addEventListener('click', () => zoomMenu.classList.toggle('open'));
+  zoomDrop.appendChild(zoomBtn); zoomDrop.appendChild(zoomMenu);
+  toolbar.appendChild(zoomDrop);
+
+  // ── System Keys dropdown ──
+  const sysKeysDrop = document.createElement('div'); sysKeysDrop.className = 'toolbar-dropdown';
+  const sysKeysBtn = document.createElement('button');
+  sysKeysBtn.className = 'btn-sm'; sysKeysBtn.title = 'System Keys';
+  sysKeysBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="10"/><line x1="10" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="14" y2="10"/><line x1="18" y1="10" x2="18" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg>';
+  const sysKeysMenu = document.createElement('div'); sysKeysMenu.className = 'toolbar-dropdown-menu';
+  const sysKeys = [
+    { label: 'Ctrl+Alt+Del', keys: [{key:'Control',code:'ControlLeft'},{key:'Alt',code:'AltLeft'},{key:'Delete',code:'Delete'}] },
+    { label: 'Alt+Tab', keys: [{key:'Alt',code:'AltLeft'},{key:'Tab',code:'Tab'}] },
+    { label: 'Alt+F4', keys: [{key:'Alt',code:'AltLeft'},{key:'F4',code:'F4'}] },
+    { label: 'Win', keys: [{key:'Meta',code:'MetaLeft'}] },
+    { label: 'Ctrl+Shift+Esc', keys: [{key:'Control',code:'ControlLeft'},{key:'Shift',code:'ShiftLeft'},{key:'Escape',code:'Escape'}] },
+    { label: 'PrtScn', keys: [{key:'PrintScreen',code:'PrintScreen'}] },
+  ];
+  for (const sk of sysKeys) {
+    const b = document.createElement('button');
+    b.textContent = sk.label;
+    b.addEventListener('click', () => { sendSystemKeys(sk.keys); sysKeysMenu.classList.remove('open'); });
+    sysKeysMenu.appendChild(b);
+  }
+  sysKeysBtn.addEventListener('click', () => sysKeysMenu.classList.toggle('open'));
+  sysKeysDrop.appendChild(sysKeysBtn); sysKeysDrop.appendChild(sysKeysMenu);
+  toolbar.appendChild(sysKeysDrop);
+
+  // ── Separator ──
+  const sep3 = document.createElement('div'); sep3.className = 'toolbar-sep'; toolbar.appendChild(sep3);
+
+  // ── Performance HUD toggle ──
+  const hudBtn = document.createElement('button');
+  hudBtn.className = 'btn-sm'; hudBtn.title = 'Performance HUD'; hudBtn.id = 'hud-toggle';
+  hudBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>';
+  hudBtn.addEventListener('click', togglePerfHud);
+  toolbar.appendChild(hudBtn);
+
+  // ── Recording button ──
+  const recBtn = document.createElement('button');
+  recBtn.className = 'btn-sm'; recBtn.title = 'Record Session'; recBtn.id = 'rec-toggle';
+  recBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>';
+  recBtn.addEventListener('click', toggleRecording);
+  toolbar.appendChild(recBtn);
+
+  // ── Annotation toggle ──
+  const annoBtn = document.createElement('button');
+  annoBtn.className = 'btn-sm'; annoBtn.title = 'Annotation'; annoBtn.id = 'anno-toggle';
+  annoBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>';
+  annoBtn.addEventListener('click', toggleAnnotation);
+  toolbar.appendChild(annoBtn);
+
+  // ── Quick Actions toggle ──
+  const qaBtn = document.createElement('button');
+  qaBtn.className = 'btn-sm'; qaBtn.title = 'Quick Actions'; qaBtn.id = 'qa-toggle';
+  qaBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>';
+  qaBtn.addEventListener('click', toggleQuickActions);
+  toolbar.appendChild(qaBtn);
+
   const statusSpan = document.createElement('span');
   statusSpan.id = 'remote-status';
   statusSpan.style.cssText = 'font-size:11px;color:var(--muted);margin-left:auto';
@@ -540,11 +843,60 @@ function renderRemoteTab(tc) {
 
   pane.appendChild(toolbar);
 
+  // ── Viewport ──
   const vp = document.createElement('div');
-  vp.className = 'remote-viewport';
+  vp.className = 'remote-viewport'; vp.id = 'remote-viewport';
   const canvas = document.createElement('canvas');
   canvas.id = 'remote-canvas'; canvas.style.display = 'none';
   vp.appendChild(canvas);
+
+  // Performance HUD overlay
+  const hud = document.createElement('div');
+  hud.className = 'perf-hud'; hud.id = 'perf-hud';
+  hud.innerHTML = '<div class="hud-row"><span class="hud-label">FPS</span><span class="hud-val" id="hud-fps">0</span></div>' +
+    '<div class="hud-row"><span class="hud-label">Bitrate</span><span class="hud-val" id="hud-bitrate">0 Mbps</span></div>' +
+    '<div class="hud-row"><span class="hud-label">Codec</span><span class="hud-val" id="hud-codec">H.264</span></div>';
+  vp.appendChild(hud);
+
+  // Recording indicator
+  const recInd = document.createElement('div');
+  recInd.className = 'rec-indicator'; recInd.id = 'rec-indicator';
+  recInd.innerHTML = '<span class="rec-dot"></span><span id="rec-timer">00:00</span>';
+  vp.appendChild(recInd);
+
+  // Annotation canvas overlay
+  const annoCanvas = document.createElement('canvas');
+  annoCanvas.id = 'annotation-canvas'; annoCanvas.className = 'annotation-overlay';
+  vp.appendChild(annoCanvas);
+
+  // Annotation toolbar
+  const annoToolbar = document.createElement('div');
+  annoToolbar.className = 'annotation-toolbar'; annoToolbar.id = 'annotation-toolbar'; annoToolbar.style.display = 'none';
+  annoToolbar.innerHTML =
+    '<button data-tool="pen" class="active" title="Pen">\u270F</button>' +
+    '<button data-tool="arrow" title="Arrow">\u2197</button>' +
+    '<button data-tool="circle" title="Circle">\u25CB</button>' +
+    '<button data-tool="text" title="Text">T</button>' +
+    '<button data-tool="eraser" title="Eraser">\u2702</button>' +
+    '<input type="color" value="#ef4444" style="width:28px;height:28px;border:none;background:none;cursor:pointer;padding:0" title="Color"/>' +
+    '<button data-action="undo" title="Undo">\u21B6</button>' +
+    '<button data-action="clear" title="Clear">\u2715</button>';
+  vp.appendChild(annoToolbar);
+
+  // Quick Actions drawer
+  const qaDrawer = document.createElement('div');
+  qaDrawer.className = 'quick-actions'; qaDrawer.id = 'quick-actions';
+  qaDrawer.innerHTML =
+    '<div class="quick-actions-header"><span>Quick Actions</span><button class="btn-sm" style="padding:3px 6px" id="qa-close">&times;</button></div>' +
+    '<div class="quick-actions-body">' +
+    '<button class="qa-btn" data-qa="lock"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Lock Workstation</button>' +
+    '<button class="qa-btn" data-qa="taskmgr"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Task Manager</button>' +
+    '<button class="qa-btn" data-qa="cmd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>Open CMD</button>' +
+    '<button class="qa-btn" data-qa="powershell"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>Open PowerShell</button>' +
+    '<button class="qa-btn" data-qa="reboot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>Reboot</button>' +
+    '</div>';
+  vp.appendChild(qaDrawer);
+
   const ph = document.createElement('div');
   ph.className = 'remote-placeholder'; ph.id = 'remote-placeholder';
   ph.innerHTML = '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Click Connect to start remote session</span>';
@@ -552,17 +904,33 @@ function renderRemoteTab(tc) {
   pane.appendChild(vp);
   tc.appendChild(pane);
 
-  canvas.addEventListener('mousemove', e => sendInput('mousemove', e, canvas));
-  canvas.addEventListener('mousedown', e => sendInput('mousedown', e, canvas));
-  canvas.addEventListener('mouseup', e => sendInput('mouseup', e, canvas));
-  canvas.addEventListener('wheel', e => { e.preventDefault(); sendInput('wheel', e, canvas); }, { passive: false });
-  canvas.addEventListener('keydown', e => { e.preventDefault(); sendInputKey('keydown', e); });
-  canvas.addEventListener('keyup', e => { e.preventDefault(); sendInputKey('keyup', e); });
+  // ── Canvas input events ──
+  canvas.addEventListener('mousemove', e => { if (!annotationActive) sendInput('mousemove', e, canvas); });
+  canvas.addEventListener('mousedown', e => { if (!annotationActive) sendInput('mousedown', e, canvas); });
+  canvas.addEventListener('mouseup', e => { if (!annotationActive) sendInput('mouseup', e, canvas); });
+  canvas.addEventListener('wheel', e => { if (!annotationActive) { e.preventDefault(); sendInput('wheel', e, canvas); } }, { passive: false });
+  canvas.addEventListener('keydown', e => { if (!annotationActive) { e.preventDefault(); sendInputKey('keydown', e); } });
+  canvas.addEventListener('keyup', e => { if (!annotationActive) { e.preventDefault(); sendInputKey('keyup', e); } });
   canvas.setAttribute('tabindex', '0');
+
+  // ── Annotation events ──
+  initAnnotationEvents(annoCanvas, annoToolbar);
+
+  // ── Quick Actions events ──
+  initQuickActionsEvents(qaDrawer);
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', e => {
+    document.querySelectorAll('.toolbar-dropdown-menu.open').forEach(m => {
+      if (!m.parentElement.contains(e.target)) m.classList.remove('open');
+    });
+  });
 }
 
 async function startRemote(wtsSessionId) {
   if (!selectedDevice) return;
+  // Add/activate session tab
+  const tab = addSessionTab(selectedDevice);
   const statusEl = document.getElementById('remote-status');
   if (statusEl) statusEl.textContent = 'Starting session...';
   try {
@@ -577,15 +945,24 @@ async function startRemote(wtsSessionId) {
     const ws = new WebSocket(proto + '//' + location.host + '/proxy/api/remote/tunnel/' + session.sessionToken);
     ws.binaryType = 'arraybuffer';
     remoteWs = ws;
+    tab.ws = ws;
     const stopBtn = document.getElementById('stop-btn');
     if (stopBtn) stopBtn.style.display = '';
-    ws.onopen = () => { if (statusEl) statusEl.textContent = 'Connected \u2014 waiting for stream...'; };
+    ws.onopen = () => {
+      if (statusEl) statusEl.textContent = 'Connected \u2014 waiting for stream...';
+      startPerfHudTimer();
+      renderSessionTabs();
+    };
     ws.onclose = () => {
       if (statusEl) statusEl.textContent = 'Disconnected';
       if (stopBtn) stopBtn.style.display = 'none';
       const c = document.getElementById('remote-canvas'), p = document.getElementById('remote-placeholder');
       if (c) c.style.display = 'none'; if (p) p.style.display = 'flex';
       remoteWs = null; remoteDecoder = null;
+      tab.ws = null; tab.decoder = null;
+      stopPerfHudTimer();
+      if (recMediaRecorder) toggleRecording();
+      renderSessionTabs();
     };
     ws.onerror = () => { if (statusEl) statusEl.textContent = 'WebSocket error'; };
     ws.onmessage = handleRemoteMessage;
@@ -595,7 +972,12 @@ async function startRemote(wtsSessionId) {
 function stopRemote() {
   if (remoteWs) { remoteWs.close(); remoteWs = null; }
   if (remoteDecoder) { try { remoteDecoder.close(); } catch {} remoteDecoder = null; }
+  stopPerfHudTimer();
+  if (recMediaRecorder) toggleRecording();
 }
+
+// ── Codec name map ──
+const codecNames = { 0x01: 'JPEG', 0x02: 'H.264', 0x03: 'VP9', 0x04: 'H.265', 0x05: 'AV1' };
 
 async function handleRemoteMessage(event) {
   if (typeof event.data === 'string') {
@@ -603,23 +985,34 @@ async function handleRemoteMessage(event) {
       const info = JSON.parse(event.data);
       if (info.type === 'paired') return;
       if (info.type === 'codec_switch') {
+        perfCodec = info.codec === 'jpeg' ? 'JPEG' : info.codec === 'h265' ? 'H.265' : info.codec === 'vp9' ? 'VP9' : info.codec === 'av1' ? 'AV1' : 'H.264';
         const el = document.getElementById('remote-status');
-        if (el) el.textContent = el.textContent.replace(/\s*\u00B7\s*(H\.264|JPEG)/, '') + ' \u00B7 ' + (info.codec === 'jpeg' ? 'JPEG' : 'H.264');
+        if (el) el.textContent = el.textContent.replace(/\s*\u00B7\s*\S+$/, '') + ' \u00B7 ' + perfCodec;
         return;
       }
       if (!info.width || !info.height) return;
       await initDecoder(info);
+      perfCodec = 'H.264';
       const el = document.getElementById('remote-status');
       if (el) el.textContent = info.width + '\u00D7' + info.height + ' @ ' + info.fps + 'fps \u00B7 H.264';
       const c = document.getElementById('remote-canvas'), p = document.getElementById('remote-placeholder');
       if (c) { c.width = info.width; c.height = info.height; c.style.display = 'block'; }
       if (p) p.style.display = 'none';
+      // Resize annotation canvas to match
+      const ac = document.getElementById('annotation-canvas');
+      if (ac && c) { ac.width = c.parentElement.clientWidth; ac.height = c.parentElement.clientHeight; }
     } catch {} return;
   }
   const buf = new Uint8Array(event.data);
   if (buf.length < 1) return;
   const type = buf[0], payload = buf.slice(1);
+
+  // Perf tracking
+  perfFrameCount++;
+  perfByteCount += buf.length;
+
   if (type === 0x01) {
+    perfCodec = 'JPEG';
     const blob = new Blob([payload], { type: 'image/jpeg' });
     createImageBitmap(blob).then(bmp => {
       const canvas = document.getElementById('remote-canvas');
@@ -660,9 +1053,12 @@ async function initDecoder(info) {
   const config = { codec: 'avc1.640034', codedWidth: info.width, codedHeight: info.height, optimizeForLatency: true };
   if (info.extradata) { const bin = atob(info.extradata); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); config.description = arr; }
   remoteDecoder.configure(config);
+  // Sync tab state
+  const tab = sessionTabs.find(t => t.id === activeSessionTabId);
+  if (tab) { tab.decoder = remoteDecoder; tab.ts = remoteTs; }
 }
 
-function sendInput(type, e, canvas) {
+function sendInput(evType, e, canvas) {
   if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
   const rect = canvas.getBoundingClientRect();
   const aw = canvas._agentW || canvas.width, ah = canvas._agentH || canvas.height;
@@ -672,15 +1068,354 @@ function sendInput(type, e, canvas) {
   const dw = aw * scale, dh = ah * scale;
   const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
   const px = (e.clientX - rect.left) * dpr - dx, py = (e.clientY - rect.top) * dpr - dy;
-  const msg = { type, x: Math.round(px / scale), y: Math.round(py / scale) };
-  if (type === 'wheel') { msg.deltaX = e.deltaX; msg.deltaY = e.deltaY; }
-  if (type !== 'mousemove') msg.button = e.button;
+  // Agent expects: type:"mouse", action:"move"/"down"/"up"/"scroll"
+  const actionMap = { mousemove:'move', mousedown:'down', mouseup:'up', wheel:'scroll' };
+  const msg = { type: 'mouse', action: actionMap[evType] || evType, x: Math.round(px / scale), y: Math.round(py / scale) };
+  if (evType === 'wheel') { msg.delta = Math.sign(-e.deltaY); }
+  if (evType === 'mousedown' || evType === 'mouseup') msg.button = e.button;
   remoteWs.send(JSON.stringify(msg));
 }
 
-function sendInputKey(type, e) {
+function sendInputKey(evType, e) {
   if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
-  remoteWs.send(JSON.stringify({ type, key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey }));
+  // Agent expects: type:"key", action:"down"/"up"
+  const action = evType === 'keydown' ? 'down' : 'up';
+  remoteWs.send(JSON.stringify({ type: 'key', action, key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey }));
+}
+
+// ── Feature: Screenshot ──────────────────────────────────────────────────────
+function takeScreenshot() {
+  const canvas = document.getElementById('remote-canvas');
+  if (!canvas || canvas.style.display === 'none') return;
+  canvas.toBlob(blob => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = 'screenshot-' + (selectedDevice?.hostname || 'remote') + '-' + ts + '.png';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, 'image/png');
+}
+
+// ── Feature: Clipboard Sync ──────────────────────────────────────────────────
+async function clipboardPasteToRemote() {
+  if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) remoteWs.send(JSON.stringify({ type: 'clipboard_set', text }));
+  } catch (err) { console.warn('clipboard read failed', err); }
+}
+
+async function clipboardCopyFromRemote() {
+  if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
+  remoteWs.send(JSON.stringify({ type: 'clipboard_get' }));
+  // Response will come as a message; handle in handleRemoteMessage
+  const handler = (event) => {
+    if (typeof event.data !== 'string') return;
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'clipboard_content' && msg.text) {
+        navigator.clipboard.writeText(msg.text).catch(() => {});
+        remoteWs.removeEventListener('message', handler);
+      }
+    } catch {}
+  };
+  remoteWs.addEventListener('message', handler);
+  setTimeout(() => remoteWs?.removeEventListener('message', handler), 3000);
+}
+
+// ── Feature: System Keys ─────────────────────────────────────────────────────
+function sendSystemKeys(keys) {
+  if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
+  // Ctrl+Alt+Del requires SAS — send special command
+  const isCAD = keys.length === 3 &&
+    keys.some(k => k.key === 'Control') &&
+    keys.some(k => k.key === 'Alt') &&
+    keys.some(k => k.key === 'Delete');
+  if (isCAD) {
+    remoteWs.send(JSON.stringify({ type: 'sas' }));
+    return;
+  }
+  // Agent expects: type:"key", action:"down"/"up"
+  for (const k of keys) {
+    remoteWs.send(JSON.stringify({ type: 'key', action: 'down', key: k.key, code: k.code, shift: k.key === 'Shift', ctrl: k.key === 'Control', alt: k.key === 'Alt', meta: k.key === 'Meta' }));
+  }
+  for (const k of [...keys].reverse()) {
+    remoteWs.send(JSON.stringify({ type: 'key', action: 'up', key: k.key, code: k.code, shift: false, ctrl: false, alt: false, meta: false }));
+  }
+}
+
+// Helper: type a string character by character via key events
+function typeString(str) {
+  if (!remoteWs || remoteWs.readyState !== WebSocket.OPEN) return;
+  for (const ch of str) {
+    const key = ch === '\r' ? 'Enter' : ch;
+    const code = ch === '\r' ? 'Enter' : ch === ' ' ? 'Space' : ch === '-' ? 'Minus' : ch === '.' ? 'Period' : ch === '/' ? 'Slash' : ch === '\\' ? 'Backslash' : 'Key' + ch.toUpperCase();
+    remoteWs.send(JSON.stringify({ type: 'key', action: 'down', key, code, shift: false, ctrl: false, alt: false, meta: false }));
+    remoteWs.send(JSON.stringify({ type: 'key', action: 'up', key, code, shift: false, ctrl: false, alt: false, meta: false }));
+  }
+}
+
+// ── Feature: Performance HUD ─────────────────────────────────────────────────
+function togglePerfHud() {
+  perfHudVisible = !perfHudVisible;
+  const hud = document.getElementById('perf-hud');
+  const btn = document.getElementById('hud-toggle');
+  if (hud) hud.classList.toggle('visible', perfHudVisible);
+  if (btn) btn.style.color = perfHudVisible ? 'var(--accent-l)' : '';
+}
+
+function startPerfHudTimer() {
+  stopPerfHudTimer();
+  perfFrameCount = 0; perfByteCount = 0; perfLastTime = performance.now();
+  perfInterval = setInterval(() => {
+    const now = performance.now();
+    const elapsed = (now - perfLastTime) / 1000;
+    if (elapsed > 0) {
+      perfFps = Math.round(perfFrameCount / elapsed);
+      perfBitrate = ((perfByteCount * 8) / elapsed / 1000000).toFixed(1);
+    }
+    perfFrameCount = 0; perfByteCount = 0; perfLastTime = now;
+    const fpsEl = document.getElementById('hud-fps');
+    const brEl = document.getElementById('hud-bitrate');
+    const codecEl = document.getElementById('hud-codec');
+    if (fpsEl) {
+      fpsEl.textContent = perfFps;
+      fpsEl.className = 'hud-val' + (perfFps < 5 ? ' hud-bad' : perfFps < 15 ? ' hud-warn' : '');
+    }
+    if (brEl) brEl.textContent = perfBitrate + ' Mbps';
+    if (codecEl) codecEl.textContent = perfCodec;
+  }, 500);
+}
+
+function stopPerfHudTimer() {
+  if (perfInterval) { clearInterval(perfInterval); perfInterval = null; }
+}
+
+// ── Feature: Zoom/Scale ──────────────────────────────────────────────────────
+function setZoomLevel(label) {
+  zoomLevel = label;
+  const btn = document.getElementById('zoom-btn');
+  if (btn) btn.textContent = label;
+  const vp = document.getElementById('remote-viewport');
+  const canvas = document.getElementById('remote-canvas');
+  if (!vp || !canvas) return;
+  if (label === 'Fit') {
+    vp.classList.remove('zoom-scroll');
+    canvas.style.width = '100%%'; canvas.style.height = '100%%';
+    canvas.style.objectFit = 'contain';
+  } else {
+    vp.classList.add('zoom-scroll');
+    const pct = parseInt(label) / 100;
+    canvas.style.width = Math.round(canvas.width * pct) + 'px';
+    canvas.style.height = Math.round(canvas.height * pct) + 'px';
+    canvas.style.objectFit = 'unset';
+  }
+}
+
+// ── Feature: Session Recording ───────────────────────────────────────────────
+function toggleRecording() {
+  const recInd = document.getElementById('rec-indicator');
+  const recBtn = document.getElementById('rec-toggle');
+  if (recMediaRecorder) {
+    // Stop recording
+    recMediaRecorder.stop();
+    recMediaRecorder = null;
+    clearInterval(recTimerInterval); recTimerInterval = null;
+    if (recInd) recInd.classList.remove('active');
+    if (recBtn) recBtn.style.color = '';
+    return;
+  }
+  // Start recording
+  const canvas = document.getElementById('remote-canvas');
+  if (!canvas || canvas.style.display === 'none') return;
+  try {
+    const stream = canvas.captureStream(15);
+    recMediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+  } catch {
+    try {
+      const stream = canvas.captureStream(15);
+      recMediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    } catch (err) { console.warn('Recording not supported', err); return; }
+  }
+  recChunks = [];
+  recStartTime = Date.now();
+  recMediaRecorder.ondataavailable = e => { if (e.data.size > 0) recChunks.push(e.data); };
+  recMediaRecorder.onstop = () => {
+    if (recChunks.length === 0) return;
+    const blob = new Blob(recChunks, { type: 'video/webm' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = 'recording-' + (selectedDevice?.hostname || 'remote') + '-' + ts + '.webm';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    recChunks = [];
+  };
+  recMediaRecorder.start(1000);
+  if (recInd) recInd.classList.add('active');
+  if (recBtn) recBtn.style.color = 'var(--danger)';
+  recTimerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
+    const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const ss = String(elapsed %% 60).padStart(2, '0');
+    const timerEl = document.getElementById('rec-timer');
+    if (timerEl) timerEl.textContent = mm + ':' + ss;
+  }, 1000);
+}
+
+// ── Feature: Quick Actions ───────────────────────────────────────────────────
+function toggleQuickActions() {
+  const drawer = document.getElementById('quick-actions');
+  if (drawer) drawer.classList.toggle('open');
+}
+
+function initQuickActionsEvents(drawer) {
+  drawer.querySelector('#qa-close')?.addEventListener('click', () => drawer.classList.remove('open'));
+  drawer.querySelectorAll('.qa-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.qa;
+      if (action === 'lock') sendSystemKeys([{key:'Meta',code:'MetaLeft'},{key:'l',code:'KeyL'}]);
+      else if (action === 'taskmgr') sendSystemKeys([{key:'Control',code:'ControlLeft'},{key:'Shift',code:'ShiftLeft'},{key:'Escape',code:'Escape'}]);
+      else if (action === 'cmd') {
+        sendSystemKeys([{key:'Meta',code:'MetaLeft'},{key:'r',code:'KeyR'}]);
+        setTimeout(() => typeString('cmd\r'), 600);
+      }
+      else if (action === 'powershell') {
+        sendSystemKeys([{key:'Meta',code:'MetaLeft'},{key:'r',code:'KeyR'}]);
+        setTimeout(() => typeString('powershell\r'), 600);
+      }
+      else if (action === 'reboot') {
+        if (confirm('Reboot ' + (selectedDevice?.hostname || 'this device') + '?')) {
+          sendSystemKeys([{key:'Meta',code:'MetaLeft'},{key:'r',code:'KeyR'}]);
+          setTimeout(() => typeString('shutdown -r -t 0\r'), 600);
+        }
+      }
+      drawer.classList.remove('open');
+    });
+  });
+}
+
+// ── Feature: Annotation/Whiteboard ───────────────────────────────────────────
+function toggleAnnotation() {
+  annotationActive = !annotationActive;
+  const canvas = document.getElementById('annotation-canvas');
+  const toolbar = document.getElementById('annotation-toolbar');
+  const btn = document.getElementById('anno-toggle');
+  if (canvas) canvas.classList.toggle('active', annotationActive);
+  if (toolbar) toolbar.style.display = annotationActive ? 'flex' : 'none';
+  if (btn) btn.style.color = annotationActive ? 'var(--accent-l)' : '';
+  if (annotationActive) {
+    const vp = document.getElementById('remote-viewport');
+    if (vp && canvas) { canvas.width = vp.clientWidth; canvas.height = vp.clientHeight; }
+    annotationCtx = canvas?.getContext('2d');
+  }
+}
+
+function initAnnotationEvents(canvas, toolbar) {
+  let startX, startY, lastImageData;
+
+  canvas.addEventListener('mousedown', e => {
+    if (!annotationActive) return;
+    annotationDrawing = true;
+    startX = e.offsetX; startY = e.offsetY;
+    if (annotationTool === 'pen' || annotationTool === 'eraser') {
+      annotationCtx.beginPath();
+      annotationCtx.moveTo(startX, startY);
+    }
+    if (annotationTool === 'arrow' || annotationTool === 'circle') {
+      lastImageData = annotationCtx.getImageData(0, 0, canvas.width, canvas.height);
+    }
+    if (annotationTool === 'text') {
+      const text = prompt('Enter text:');
+      if (text) {
+        annotationCtx.font = '16px sans-serif';
+        annotationCtx.fillStyle = annotationColor;
+        annotationCtx.fillText(text, startX, startY);
+        annotationHistory.push(annotationCtx.getImageData(0, 0, canvas.width, canvas.height));
+      }
+      annotationDrawing = false;
+    }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!annotationDrawing || !annotationActive) return;
+    const x = e.offsetX, y = e.offsetY;
+    if (annotationTool === 'pen') {
+      annotationCtx.strokeStyle = annotationColor;
+      annotationCtx.lineWidth = 3;
+      annotationCtx.lineCap = 'round';
+      annotationCtx.lineTo(x, y);
+      annotationCtx.stroke();
+    } else if (annotationTool === 'eraser') {
+      annotationCtx.strokeStyle = 'rgba(0,0,0,1)';
+      annotationCtx.globalCompositeOperation = 'destination-out';
+      annotationCtx.lineWidth = 20;
+      annotationCtx.lineCap = 'round';
+      annotationCtx.lineTo(x, y);
+      annotationCtx.stroke();
+      annotationCtx.globalCompositeOperation = 'source-over';
+    } else if (annotationTool === 'arrow' && lastImageData) {
+      annotationCtx.putImageData(lastImageData, 0, 0);
+      annotationCtx.strokeStyle = annotationColor;
+      annotationCtx.lineWidth = 3;
+      annotationCtx.beginPath();
+      annotationCtx.moveTo(startX, startY);
+      annotationCtx.lineTo(x, y);
+      annotationCtx.stroke();
+      // Arrowhead
+      const angle = Math.atan2(y - startY, x - startX);
+      annotationCtx.beginPath();
+      annotationCtx.moveTo(x, y);
+      annotationCtx.lineTo(x - 12 * Math.cos(angle - 0.5), y - 12 * Math.sin(angle - 0.5));
+      annotationCtx.moveTo(x, y);
+      annotationCtx.lineTo(x - 12 * Math.cos(angle + 0.5), y - 12 * Math.sin(angle + 0.5));
+      annotationCtx.stroke();
+    } else if (annotationTool === 'circle' && lastImageData) {
+      annotationCtx.putImageData(lastImageData, 0, 0);
+      annotationCtx.strokeStyle = annotationColor;
+      annotationCtx.lineWidth = 3;
+      const rx = Math.abs(x - startX) / 2, ry = Math.abs(y - startY) / 2;
+      const cx = (startX + x) / 2, cy = (startY + y) / 2;
+      annotationCtx.beginPath();
+      annotationCtx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
+      annotationCtx.stroke();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    if (annotationDrawing && annotationActive) {
+      annotationDrawing = false;
+      annotationHistory.push(annotationCtx.getImageData(0, 0, canvas.width, canvas.height));
+    }
+  });
+
+  toolbar.querySelectorAll('button[data-tool]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      annotationTool = btn.dataset.tool;
+      toolbar.querySelectorAll('button[data-tool]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  toolbar.querySelector('input[type="color"]')?.addEventListener('input', e => { annotationColor = e.target.value; });
+
+  toolbar.querySelector('button[data-action="undo"]')?.addEventListener('click', () => {
+    if (annotationHistory.length > 0) {
+      annotationHistory.pop();
+      if (annotationHistory.length > 0) {
+        annotationCtx.putImageData(annotationHistory[annotationHistory.length - 1], 0, 0);
+      } else {
+        annotationCtx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+  });
+
+  toolbar.querySelector('button[data-action="clear"]')?.addEventListener('click', () => {
+    annotationCtx?.clearRect(0, 0, canvas.width, canvas.height);
+    annotationHistory = [];
+  });
 }
 
 // ── Scripts tab ──────────────────────────────────────────────────────────────

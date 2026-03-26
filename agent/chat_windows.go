@@ -243,27 +243,33 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 		})
 	})
 	w.Bind("goMinimizeChat", func() {
-		// Minimize the window to a small tab on the right edge
+		// Shrink window to a 56x56 chat bubble
 		go func() {
 			titleW, _ := syscall.UTF16PtrFromString(windowTitle)
 			hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
 			if hwnd == 0 { return }
 			var wa chatWinRECT
 			chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
-			// Slide to right edge — only 40px visible
-			x := int(wa.Right) - 40
-			y := int(wa.Bottom) - 520 - 16
+			// Circular region for bubble
+			rgn, _, _ := chatProcCreateRoundRgn.Call(0, 0, 56, 56, 56, 56)
+			if rgn != 0 { chatProcSetWindowRgn.Call(hwnd, rgn, 1) }
+			x := int(wa.Right) - 56 - 20
+			y := int(wa.Bottom) - 56 - 20
 			chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
-				uintptr(x), uintptr(y), 380, 520, 0x0040)
+				uintptr(x), uintptr(y), 56, 56, 0x0040)
 		}()
 	})
 	w.Bind("goRestoreChat", func() {
+		// Restore full chat window from bubble
 		go func() {
 			titleW, _ := syscall.UTF16PtrFromString(windowTitle)
 			hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
 			if hwnd == 0 { return }
 			var wa chatWinRECT
 			chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
+			// Rounded rect region for full chat
+			rgn, _, _ := chatProcCreateRoundRgn.Call(0, 0, 380, 520, 18, 18)
+			if rgn != 0 { chatProcSetWindowRgn.Call(hwnd, rgn, 1) }
 			x := int(wa.Right) - 380 - 16
 			y := int(wa.Bottom) - 520 - 16
 			chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
@@ -340,7 +346,7 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 
 func buildChatHTML(operatorName, operatorAvatar, userName, userInitials string, i18n map[string]string) string {
 	// Build avatar HTML — use image if available, otherwise initials
-	avatarHTML := `<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#7F77DD,#534AB7);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.9)">` + string([]rune(operatorName)[0:1]) + `</span></div>`
+	avatarHTML := `<div style="width:32px;height:32px;border-radius:50%;background:#c2001b;display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.95)">` + string([]rune(operatorName)[0:1]) + `</span></div>`
 	smallAvatarHTML := avatarHTML
 	if operatorAvatar != "" {
 		avatarHTML = fmt.Sprintf(`<img src="%s" style="width:32px;height:32px;border-radius:50%%;object-fit:cover;flex-shrink:0" />`, operatorAvatar)
@@ -351,64 +357,78 @@ func buildChatHTML(operatorName, operatorAvatar, userName, userInitials string, 
 <html><head><meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#12102a;overflow:hidden;height:100vh;display:flex;flex-direction:column;margin:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;overflow:hidden;height:100vh;display:flex;flex-direction:column;margin:0}
 ::-webkit-scrollbar{width:4px}
-::-webkit-scrollbar-thumb{background:rgba(127,119,221,0.3);border-radius:4px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
-.chat-container{display:flex;flex-direction:column;height:100vh;border-radius:18px;overflow:hidden;border:0.5px solid rgba(127,119,221,0.35);background:#12102a}
-.header{background:#16142b;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid rgba(127,119,221,0.2);-webkit-app-region:drag}
+
+/* ── Full chat view ── */
+.chat-container{display:flex;flex-direction:column;height:100vh;border-radius:18px;overflow:hidden;background:#0d1117}
+.header{background:#161b22;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.06);-webkit-app-region:drag}
 .header button{-webkit-app-region:no-drag;background:transparent;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:6px}
-.header button:hover{background:rgba(255,255,255,0.1)}
+.header button:hover{background:rgba(255,255,255,0.08)}
 .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
 .msg-row{display:flex;gap:8px;align-items:flex-end}
 .msg-row.user{justify-content:flex-end}
 .bubble{border-radius:14px 14px 14px 2px;padding:10px 14px;max-width:75%%;font-size:13px;line-height:1.5}
-.bubble.op{background:rgba(127,119,221,0.18);border:0.5px solid rgba(127,119,221,0.3);color:rgba(255,255,255,0.85)}
-.bubble.user{background:#534AB7;border-radius:14px 14px 2px 14px;color:rgba(255,255,255,0.92)}
-.bubble.system{background:rgba(255,200,0,0.1);border:0.5px solid rgba(255,200,0,0.2);color:rgba(255,200,0,0.8);font-size:11px;text-align:center;border-radius:10px;align-self:center;max-width:90%%}
+.bubble.op{background:rgba(194,0,27,0.12);border:1px solid rgba(194,0,27,0.2);color:#e6edf3}
+.bubble.user{background:#c2001b;border-radius:14px 14px 2px 14px;color:rgba(255,255,255,0.95)}
+.bubble.system{background:rgba(250,204,21,0.08);border:1px solid rgba(250,204,21,0.15);color:rgba(250,204,21,0.8);font-size:11px;text-align:center;border-radius:10px;align-self:center;max-width:90%%}
 .avatar{width:28px;height:28px;border-radius:50%%;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.avatar.op{background:linear-gradient(135deg,#7F77DD,#534AB7)}
-.avatar.user{background:rgba(255,255,255,0.1)}
+.avatar.op{background:#c2001b}
+.avatar.user{background:#21262d}
 .avatar img{width:28px;height:28px;border-radius:50%%;object-fit:cover}
-.avatar span{font-size:11px;font-weight:500;color:rgba(255,255,255,0.6)}
+.avatar span{font-size:11px;font-weight:500;color:#8b949e}
 .timestamp{text-align:center;margin:4px 0}
-.timestamp span{font-size:11px;color:rgba(255,255,255,0.25);background:rgba(255,255,255,0.05);padding:3px 10px;border-radius:20px}
-.typing{display:flex;gap:4px;margin-top:6px}
-.typing span{width:6px;height:6px;border-radius:50%%;background:rgba(127,119,221,0.5);animation:pulse 1s infinite}
-.typing span:nth-child(2){animation-delay:.2s}
-.typing span:nth-child(3){animation-delay:.4s}
-@keyframes pulse{0%%,100%%{opacity:.3;transform:scale(.9)}50%%{opacity:1;transform:scale(1.1)}}
-.input-area{background:#16142b;padding:12px;border-top:0.5px solid rgba(127,119,221,0.2)}
-.input-row{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.05);border:0.5px solid rgba(127,119,221,0.3);border-radius:10px;padding:8px 12px}
-.input-row input{flex:1;background:transparent;border:none;outline:none;font-size:13px;color:rgba(255,255,255,0.8)}
-.input-row input::placeholder{color:rgba(255,255,255,0.25)}
-.send-btn{background:#534AB7;border:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center}
-.send-btn:hover{background:#6358d4}
-.remote-panel{background:rgba(30,58,138,0.5);border:0.5px solid rgba(100,150,255,0.3);border-radius:12px;padding:12px;margin:8px 0;text-align:center}
-.remote-panel p{font-size:12px;color:rgba(255,255,255,0.8);margin-bottom:8px}
+.timestamp span{font-size:11px;color:#484f58;background:rgba(255,255,255,0.04);padding:3px 10px;border-radius:20px}
+.input-area{background:#161b22;padding:12px;border-top:1px solid rgba(255,255,255,0.06)}
+.input-row{display:flex;align-items:center;gap:8px;background:#0d1117;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 12px}
+.input-row input{flex:1;background:transparent;border:none;outline:none;font-size:13px;color:#e6edf3}
+.input-row input::placeholder{color:#484f58}
+.input-row input:focus{outline:none}
+.send-btn{background:#c2001b;border:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background .15s}
+.send-btn:hover{background:#a80018}
+.remote-panel{background:rgba(194,0,27,0.08);border:1px solid rgba(194,0,27,0.2);border-radius:12px;padding:12px;margin:8px 0;text-align:center}
+.remote-panel p{font-size:12px;color:#e6edf3;margin-bottom:8px}
 .remote-panel button{padding:6px 16px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:500;margin:0 4px}
 .remote-panel .allow{background:#22c55e;color:white}
 .remote-panel .deny{background:#ef4444;color:white}
+
+/* ── Bubble mode ── */
+.bubble-btn{display:none;width:56px;height:56px;border-radius:50%%;background:#c2001b;cursor:pointer;align-items:center;justify-content:center;position:relative;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+.bubble-btn:hover{background:#a80018}
+.bubble-btn svg{width:24px;height:24px}
+.unread-badge{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;border-radius:9px;background:#ef4444;color:white;font-size:10px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px}
+body.minimized .chat-container{display:none}
+body.minimized .bubble-btn{display:flex}
 </style>
 </head><body>
+
+<!-- Bubble button (shown when minimized) -->
+<div class="bubble-btn" id="bubble-btn" onclick="restoreChat()">
+  <svg viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="white"/></svg>
+  <span class="unread-badge" id="unread-badge">0</span>
+</div>
+
+<!-- Full chat container -->
 <div class="chat-container">
   <div class="header">
     <div style="display:flex;align-items:center;gap:10px">
       %s
       <div>
-        <p style="font-size:13px;font-weight:500;color:rgba(255,255,255,0.92)">` + i18n["chattingWith"] + ` ` + operatorName + `</p>
+        <p style="font-size:13px;font-weight:500;color:#e6edf3">` + i18n["chattingWith"] + ` ` + operatorName + `</p>
         <div style="display:flex;align-items:center;gap:5px">
-          <div style="width:6px;height:6px;border-radius:50%%;background:#5DCAA5"></div>
-          <span style="font-size:11px;color:rgba(255,255,255,0.4)">` + i18n["online"] + `</span>
+          <div style="width:6px;height:6px;border-radius:50%%;background:#4ade80"></div>
+          <span style="font-size:11px;color:#8b949e">` + i18n["online"] + `</span>
         </div>
       </div>
     </div>
     <div style="display:flex;gap:4px">
       <button onclick="minimizeChat()" title="Minimize">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 12h16" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 12h16" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
       <button onclick="goCloseChat()" title="Close">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="#8b949e" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
     </div>
   </div>
@@ -432,6 +452,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 const opAvatarSmall = '%s';
 const userInitials = '%s';
+let isMinimized = false;
+let unreadCount = 0;
 
 function sendMsg() {
   const inp = document.getElementById('input');
@@ -454,6 +476,14 @@ function addMessage(text, initials, isOp) {
   }
   msgs.appendChild(row);
   msgs.scrollTop = msgs.scrollHeight;
+
+  // Update unread badge when in bubble mode
+  if (isMinimized && isOp) {
+    unreadCount++;
+    const badge = document.getElementById('unread-badge');
+    badge.textContent = unreadCount;
+    badge.style.display = 'flex';
+  }
 }
 
 function addSystemMessage(text) {
@@ -466,6 +496,8 @@ function addSystemMessage(text) {
 }
 
 function showRemoteRequest(msg) {
+  // Auto-restore from bubble if minimized
+  if (isMinimized) restoreChat();
   const panel = document.getElementById('remote-panel');
   const rmsg = document.getElementById('remote-msg');
   rmsg.textContent = msg || 'Remote control access requested.';
@@ -485,26 +517,26 @@ function playSound() {
   } catch(e) {}
 }
 
-let isMinimized = false;
 function minimizeChat() {
-  if (isMinimized) {
-    goRestoreChat();
-    isMinimized = false;
-    document.querySelector('.chat-container').style.opacity = '1';
-  } else {
-    goMinimizeChat();
-    isMinimized = true;
-    document.querySelector('.chat-container').style.opacity = '0.7';
-  }
+  isMinimized = true;
+  document.body.classList.add('minimized');
+  goMinimizeChat();
 }
-// Click anywhere on the window when minimized to restore
-document.addEventListener('click', function(e) {
-  if (isMinimized && !e.target.closest('button')) {
-    goRestoreChat();
-    isMinimized = false;
-    document.querySelector('.chat-container').style.opacity = '1';
-  }
-});
+
+function restoreChat() {
+  isMinimized = false;
+  unreadCount = 0;
+  document.body.classList.remove('minimized');
+  document.getElementById('unread-badge').style.display = 'none';
+  goRestoreChat();
+  // Scroll to bottom and focus input
+  setTimeout(function() {
+    var msgs = document.getElementById('messages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    var inp = document.getElementById('input');
+    if (inp) inp.focus();
+  }, 100);
+}
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

@@ -92,6 +92,8 @@ func inputKey(vk int, down bool) {
 	C.mac_key(C.int(kc), d)
 }
 
+func inputSAS() {} // not applicable on macOS
+
 func inputVKFromKey(key string) (int, int) {
 	runes := []rune(key)
 	if len(runes) != 1 {

@@ -101,6 +101,7 @@ func newProxy(cfg *Config, cfgDir string, port int) *Proxy {
 	mux.HandleFunc("/proxy/", p.handleProxy)
 	mux.HandleFunc("/local/config", p.handleConfig)
 	mux.HandleFunc("/local/logout", p.handleLogout)
+	mux.HandleFunc("/local/favorites", p.handleFavorites)
 	mux.HandleFunc("/sso/callback", p.handleSsoCallback)
 	p.mux = mux
 	return p
@@ -164,6 +165,28 @@ func (p *Proxy) handleLogout(w http.ResponseWriter, r *http.Request) {
 	p.session.clear()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (p *Proxy) handleFavorites(w http.ResponseWriter, r *http.Request) {
+	favPath := filepath.Join(filepath.Dir(p.session.path), "favorites.json")
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method == http.MethodPost {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, `{"error":"read body"}`, http.StatusBadRequest)
+			return
+		}
+		_ = os.MkdirAll(filepath.Dir(favPath), 0700)
+		_ = os.WriteFile(favPath, body, 0600)
+		fmt.Fprint(w, `{"ok":true}`)
+		return
+	}
+	data, err := os.ReadFile(favPath)
+	if err != nil {
+		fmt.Fprint(w, `[]`)
+		return
+	}
+	w.Write(data)
 }
 
 // handleSsoCallback handles the OAuth redirect from Obligate back to the local app.

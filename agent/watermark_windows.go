@@ -97,13 +97,53 @@ static void hide_watermark_rec(void) {
         g_wm_font = NULL;
     }
 }
+// g_watermark_tid: thread ID of the watermark message pump thread.
+static DWORD g_watermark_tid = 0;
+
+// watermark_run: creates the watermark and runs a message pump.
+// Blocks until WM_QUIT is posted to this thread.
+static void watermark_run(void) {
+    g_watermark_tid = GetCurrentThreadId();
+    show_watermark_rec();
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    hide_watermark_rec();
+    g_watermark_tid = 0;
+}
+
+// stop_watermark_pump: posts WM_QUIT to the watermark thread.
+// Safe to call from any thread.
+static void stop_watermark_pump(void) {
+    DWORD tid = g_watermark_tid;
+    if (tid != 0) {
+        PostThreadMessageW(tid, WM_QUIT, 0, 0);
+    }
+}
 */
 import "C"
 
+import "runtime"
+
+var watermarkRunning bool
+
 func showWatermark(operatorName string) {
-	C.show_watermark_rec()
+	if watermarkRunning {
+		return
+	}
+	watermarkRunning = true
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		C.watermark_run() // blocks until stop_watermark_pump is called
+		watermarkRunning = false
+	}()
 }
 
 func hideWatermark() {
-	C.hide_watermark_rec()
+	if watermarkRunning {
+		C.stop_watermark_pump()
+	}
 }
