@@ -45,10 +45,11 @@ var (
 	chatProcSetWindowRgn   = chatUser32.NewProc("SetWindowRgn")
 	chatProcShowWindow     = chatUser32.NewProc("ShowWindow")
 	chatProcSetClassLongW  = chatUser32.NewProc("SetClassLongPtrW")
-	chatProcSendMessageW   = chatUser32.NewProc("SendMessageW")
 )
 
-func chatMakePopup(title string) {
+// chatMakePopup styles the WebView2 window: borderless, topmost, transparent,
+// rounded corners, positioned bottom-right. Returns the HWND for post-show fixup.
+func chatMakePopup(title string) uintptr {
 	titleW, _ := syscall.UTF16PtrFromString(title)
 
 	// Poll for the window handle (WebView2 may take a moment to create it)
@@ -60,54 +61,77 @@ func chatMakePopup(title string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if hwnd == 0 { return }
-
-	// Move off-screen immediately — faster than SW_HIDE, prevents any flash
-	// at the default position (top-left). SWP_NOZORDER|SWP_NOACTIVATE = 0x0014
-	chatProcSetWindowPos.Call(hwnd, 0,
-		uintptr(0), uintptr(0), 0, 0, 0x0014|0x0001|0x0080) // NOSIZE|NOCOPYBITS
-	chatProcShowWindow.Call(hwnd, 0) // SW_HIDE (belt and suspenders)
+	if hwnd == 0 { return 0 }
 
 	const gwlStyle = ^uintptr(15)   // GWL_STYLE = -16
 	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE = -20
 
-	// Change the window class background brush from white to dark (#0d1117)
-	// This eliminates the white border around the WebView2 content.
-	// COLORREF = 0x00BBGGRR → #0d1117 = R:0x0D G:0x11 B:0x17 = 0x0017110D
+	// Step 1: Add WS_EX_LAYERED immediately so we can set alpha to 0.
+	// This makes the window fully transparent BEFORE anything paints —
+	// the user never sees the default white window or top-left position.
+	ex, _, _ := chatProcGetWindowLongPtrW.Call(hwnd, gwlExStyle)
+	chatProcSetWindowLongPtrW.Call(hwnd, gwlExStyle,
+		ex|0x00000008|0x00000080|0x00080000) // TOPMOST|TOOLWINDOW|LAYERED
+	chatProcSetLayeredAttr.Call(hwnd, 0, 0, 2) // LWA_ALPHA, alpha=0 (invisible)
+
+	// Step 2: Change window class background brush from white to dark (#0d1117)
+	// COLORREF = 0x00BBGGRR → R:0x0D G:0x11 B:0x17 = 0x0017110D
 	darkBrush, _, _ := chatProcCreateBrush.Call(0x0017110D)
 	if darkBrush != 0 {
 		chatProcSetClassLongW.Call(hwnd, ^uintptr(9), darkBrush) // GCLP_HBRBACKGROUND = -10
 	}
 
-	// Remove titlebar — WS_POPUP | WS_VISIBLE
+	// Step 3: Remove titlebar — WS_POPUP | WS_VISIBLE
 	chatProcSetWindowLongPtrW.Call(hwnd, gwlStyle, 0x80000000|0x10000000)
 
-	// WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED
-	ex, _, _ := chatProcGetWindowLongPtrW.Call(hwnd, gwlExStyle)
-	chatProcSetWindowLongPtrW.Call(hwnd, gwlExStyle,
-		ex|0x00000008|0x00000080|0x00080000)
-
-	// Transparency 94%
-	chatProcSetLayeredAttr.Call(hwnd, 0, 240, 2)
-
-	// Rounded corners via region clipping (18px radius)
+	// Step 4: Rounded corners via region clipping (18px radius)
 	rgn, _, _ := chatProcCreateRoundRgn.Call(0, 0, 380, 520, 18, 18)
 	if rgn != 0 {
-		chatProcSetWindowRgn.Call(hwnd, rgn, 1) // bRedraw=TRUE
+		chatProcSetWindowRgn.Call(hwnd, rgn, 1)
 	}
 
-	// Position bottom-right with SWP_FRAMECHANGED to force WebView2 to
-	// recalculate its layout and fill the full window (fixes white gap on right)
+	// Step 5: Position bottom-right (still invisible due to alpha=0)
 	var wa chatWinRECT
 	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
 	x := int(wa.Right) - 380 - 16
 	y := int(wa.Bottom) - 520 - 16
 	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
-		uintptr(x), uintptr(y), 380, 520, 0x0020|0x0040) // SWP_FRAMECHANGED|SWP_SHOWWINDOW
+		uintptr(x), uintptr(y), 380, 520, 0x0020) // SWP_FRAMECHANGED
 
-	// Force WebView2 to resize its content to match the window
-	// WM_SIZE=0x0005, wParam=0 (SIZE_RESTORED), lParam=MAKELPARAM(380,520)
-	chatProcSendMessageW.Call(hwnd, 0x0005, 0, uintptr(520<<16|380))
+	// Step 6: Fade in — set final alpha (94% opacity)
+	chatProcSetLayeredAttr.Call(hwnd, 0, 240, 2)
+	return hwnd
+}
+
+// chatPostShowFixup forces WebView2 to recalculate its bounds by jiggling
+// the window size. Must be called AFTER w.Run() has started processing messages,
+// otherwise WM_SIZE is not handled by the WebView2 controller.
+func chatPostShowFixup(hwnd uintptr) {
+	if hwnd == 0 { return }
+
+	// Wait for the WebView2 message loop to be running
+	time.Sleep(400 * time.Millisecond)
+
+	// Jiggle: resize to +2px, then back to exact size.
+	// This triggers WM_SIZE → WebView2 controller.put_Bounds,
+	// which makes the WebView2 content fill the entire window.
+	// This is the same mechanism that makes minimize/restore fix the white gap.
+	var wa chatWinRECT
+	chatProcSysParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&wa)), 0)
+	x := int(wa.Right) - 380 - 16
+	y := int(wa.Bottom) - 520 - 16
+
+	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
+		uintptr(x), uintptr(y), 382, 522, 0x0020) // SWP_FRAMECHANGED
+	time.Sleep(50 * time.Millisecond)
+
+	// Re-apply exact size + region
+	rgn, _, _ := chatProcCreateRoundRgn.Call(0, 0, 380, 520, 18, 18)
+	if rgn != 0 {
+		chatProcSetWindowRgn.Call(hwnd, rgn, 1)
+	}
+	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
+		uintptr(x), uintptr(y), 380, 520, 0x0020) // SWP_FRAMECHANGED
 }
 
 var chatConn net.Conn
@@ -257,10 +281,13 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	chatWebview = w
 	defer w.Destroy()
 
-	// Make the window borderless, positioned bottom-right, topmost
-	// chatMakePopup polls for the HWND, hides it, styles it, then shows it
+	// Make the window borderless, positioned bottom-right, topmost.
+	// Phase 1 (chatMakePopup): hides via alpha=0, styles, positions, fades in.
+	// Phase 2 (chatPostShowFixup): after Run() starts, jiggles the size to
+	// force WebView2 to fill the full window (eliminates white gap on right).
 	go func() {
-		chatMakePopup(windowTitle)
+		hwnd := chatMakePopup(windowTitle)
+		chatPostShowFixup(hwnd)
 	}()
 
 	// Bind Go functions callable from JavaScript
