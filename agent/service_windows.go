@@ -89,7 +89,7 @@ func init() {
 
 	// Service main: called by SCM dispatcher thread after StartServiceCtrlDispatcher.
 	gSvcMainCb = syscall.NewCallback(func(argc, argv uintptr) uintptr {
-		namePtr, err := syscall.UTF16PtrFromString("ObliReachAgent")
+		namePtr, err := syscall.UTF16PtrFromString("OblireachAgent")
 		if err != nil {
 			return 1
 		}
@@ -132,7 +132,7 @@ func init() {
 func tryRunAsService(runFn func()) bool {
 	gSvcRunFn = runFn
 
-	namePtr, err := syscall.UTF16PtrFromString("ObliReachAgent")
+	namePtr, err := syscall.UTF16PtrFromString("OblireachAgent")
 	if err != nil {
 		return false
 	}

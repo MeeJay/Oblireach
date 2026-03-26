@@ -113,7 +113,7 @@ static void showToast(const wchar_t *title, const wchar_t *message, DWORD timeou
     wc.hInstance      = GetModuleHandleW(NULL);
     wc.hCursor       = LoadCursor(NULL, IDC_HAND);
     wc.hbrBackground = CreateSolidBrush(RGB(30, 41, 59));
-    wc.lpszClassName  = L"ObliReachToast";
+    wc.lpszClassName  = L"OblireachToast";
     RegisterClassExW(&wc);
 
     // Position: bottom-right of primary monitor work area
@@ -127,7 +127,7 @@ static void showToast(const wchar_t *title, const wchar_t *message, DWORD timeou
 
     HWND hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
-        L"ObliReachToast", NULL,
+        L"OblireachToast", NULL,
         WS_POPUP | WS_VISIBLE,
         startX, y, TOAST_W, TOAST_H,
         NULL, NULL, wc.hInstance, &timeoutSec);

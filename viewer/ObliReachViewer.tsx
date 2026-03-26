@@ -1,5 +1,5 @@
 /**
- * ObliReachViewer — native screen-streaming viewer for the Oblireach protocol.
+ * OblireachViewer — native screen-streaming viewer for the Oblireach protocol.
  *
  * Copy this file into D:\Obliance\client\src\components\ to integrate it.
  *
@@ -32,7 +32,7 @@ const FRAME_JPEG  = 0x01;
 
 type ConnStatus = 'connecting' | 'waiting' | 'streaming' | 'disconnected' | 'error';
 
-interface ObliReachViewerProps {
+interface OblireachViewerProps {
   /** Obliance session token (hex, 64 chars). Used to build the WS URL. */
   sessionToken: string | null;
   /** Human-readable device name shown in the toolbar. */
@@ -56,13 +56,13 @@ type AgentMsg = InitMsg | ResizeMsg | { type: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ObliReachViewer({
+export function OblireachViewer({
   sessionToken,
   deviceName,
   viewerToken,
   relayHost,
   onClose,
-}: ObliReachViewerProps) {
+}: OblireachViewerProps) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef        = useRef<WebSocket | null>(null);

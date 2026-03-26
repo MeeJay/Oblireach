@@ -30,7 +30,7 @@ func init() {
 		if programData == "" {
 			programData = `C:\ProgramData`
 		}
-		configDir = filepath.Join(programData, "ObliReachAgent")
+		configDir = filepath.Join(programData, "OblireachAgent")
 	} else {
 		configDir = "/etc/oblireach-agent"
 	}

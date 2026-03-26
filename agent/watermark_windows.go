@@ -67,7 +67,7 @@ static void show_watermark_rec(void) {
     wc.lpfnWndProc = wmWndProc;
     wc.hInstance = GetModuleHandleW(NULL);
     wc.hbrBackground = NULL;
-    wc.lpszClassName = L"ObliReachRec";
+    wc.lpszClassName = L"OblireachRec";
     RegisterClassExW(&wc);
 
     RECT wa;
@@ -77,7 +77,7 @@ static void show_watermark_rec(void) {
 
     g_watermark = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
-        L"ObliReachRec", NULL,
+        L"OblireachRec", NULL,
         WS_POPUP | WS_VISIBLE,
         x, y, WM_REC_W, WM_REC_H,
         NULL, NULL, wc.hInstance, NULL);

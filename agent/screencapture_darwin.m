@@ -21,10 +21,10 @@ static SCStream *g_mac_stream = nil;
 static int g_mac_capturing = 0;
 
 // Stream delegate
-@interface ObliReachStreamDelegate : NSObject <SCStreamOutput>
+@interface OblireachStreamDelegate : NSObject <SCStreamOutput>
 @end
 
-@implementation ObliReachStreamDelegate
+@implementation OblireachStreamDelegate
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type {
     if (type != SCStreamOutputTypeScreen) return;
 
@@ -53,7 +53,7 @@ static int g_mac_capturing = 0;
 }
 @end
 
-static ObliReachStreamDelegate *g_mac_delegate = nil;
+static OblireachStreamDelegate *g_mac_delegate = nil;
 
 int mac_sck_init(void) {
     if (g_mac_width <= 0 || g_mac_height <= 0) return -1;
@@ -95,7 +95,7 @@ int mac_sck_init(void) {
         config.pixelFormat = kCVPixelFormatType_32BGRA;
         config.showsCursor = YES;
 
-        g_mac_delegate = [[ObliReachStreamDelegate alloc] init];
+        g_mac_delegate = [[OblireachStreamDelegate alloc] init];
         g_mac_stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:nil];
 
         NSError *addErr = nil;

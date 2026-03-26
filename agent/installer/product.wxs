@@ -34,7 +34,7 @@
     <Property Id="APIKEY" Secure="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="ObliReachAgent">
+      <Directory Id="INSTALLFOLDER" Name="OblireachAgent">
 
         <!--
           The Go binary is a proper Windows service executable.
@@ -52,7 +52,7 @@
           <File Id="AgentExeFile" Source="dist\oblireach-agent.exe" Name="oblireach-agent.exe"
                 DefaultVersion="65535.0.0.0" />
           <ServiceInstall Id="AgentSvc"
-                          Name="ObliReachAgent"
+                          Name="OblireachAgent"
                           DisplayName="Oblireach Remote Agent"
                           Description="Provides remote desktop access and session management via the Oblireach platform."
                           Start="auto"
@@ -60,8 +60,8 @@
                           Account="LocalSystem"
                           ErrorControl="normal"
                           Arguments='--url "[SERVERURL]" --key "[APIKEY]"' />
-          <ServiceControl Id="AgentSvcStart" Name="ObliReachAgent" Start="install" />
-          <ServiceControl Id="AgentSvcStop"  Name="ObliReachAgent" Stop="both" Remove="uninstall" Wait="yes" />
+          <ServiceControl Id="AgentSvcStart" Name="OblireachAgent" Start="install" />
+          <ServiceControl Id="AgentSvcStop"  Name="OblireachAgent" Stop="both" Remove="uninstall" Wait="yes" />
         </Component>
 
         <!-- Codec DLLs (loaded dynamically at runtime — optional but recommended) -->
@@ -80,9 +80,9 @@
           Written to 64-bit hive via -arch x64 build flag.
         -->
         <Component Id="AgentConfig" Guid="E8F9A0B1-C2D3-4567-EFA0-012345670002">
-          <RegistryValue Root="HKLM" Key="SOFTWARE\ObliReachAgent"
+          <RegistryValue Root="HKLM" Key="SOFTWARE\OblireachAgent"
                          Name="ServerUrl" Type="string" Value="[SERVERURL]" KeyPath="yes" />
-          <RegistryValue Root="HKLM" Key="SOFTWARE\ObliReachAgent"
+          <RegistryValue Root="HKLM" Key="SOFTWARE\OblireachAgent"
                          Name="ApiKey"    Type="string" Value="[APIKEY]" />
         </Component>
 

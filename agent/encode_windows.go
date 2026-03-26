@@ -414,7 +414,7 @@ func openEncoderDiag() {
 	paths := []string{
 		filepath.Join(os.TempDir(), "oblireach-encoder-diag.log"),
 		`C:\Users\Public\oblireach-encoder-diag.log`,
-		`C:\ProgramData\ObliReachAgent\encoder-diag.log`,
+		`C:\ProgramData\OblireachAgent\encoder-diag.log`,
 	}
 	for _, p := range paths {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)

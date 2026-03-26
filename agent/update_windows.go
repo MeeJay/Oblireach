@@ -63,7 +63,7 @@ func performUpdate(cfg *Config, cmd *command, relativeURL, version string) {
 	log.Printf("Command %s: update: MSI ready at %s — launching msiexec", cmd.ID, tmpPath)
 
 	// ── 3. Launch msiexec as detached process ─────────────────────────────
-	// msiexec will: stop ObliReachAgent service → replace binary → start service.
+	// msiexec will: stop OblireachAgent service → replace binary → start service.
 	// We launch detached so the service process can be cleanly stopped by SCM.
 	logPath := filepath.Join(os.TempDir(), "oblireach-update.log")
 	msiexec := exec.Command("msiexec.exe",

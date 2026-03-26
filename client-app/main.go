@@ -37,7 +37,7 @@ func init() {
 		if appData == "" {
 			appData = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming")
 		}
-		configDir = filepath.Join(appData, "ObliReachClient")
+		configDir = filepath.Join(appData, "OblireachClient")
 	} else {
 		home, _ := os.UserHomeDir()
 		configDir = filepath.Join(home, ".oblireach-client")
