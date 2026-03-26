@@ -326,6 +326,7 @@ let chatMessages = [];
 let chatConnected = false;
 let chatUserClosed = false;
 let currentOperatorName = '';
+let currentOperatorAvatar = '';
 
 // Performance HUD state
 let perfHudVisible = false;
@@ -472,6 +473,15 @@ async function enterApp() {
       const d = await r.json();
       const u = d.data || d.user || d;
       currentOperatorName = u.displayName || u.display_name || u.username || 'Operator';
+      currentOperatorAvatar = u.profilePicture || u.profile_picture || u.avatar || '';
+      // Update chat header avatar
+      if (currentOperatorAvatar) {
+        const hdrAvatar = document.querySelector('.chat-header .avatar');
+        if (hdrAvatar) hdrAvatar.innerHTML = '<img src="' + currentOperatorAvatar + '" style="width:36px;height:36px;border-radius:50%%;object-fit:cover" />';
+      }
+      // Update chat header name
+      const hdrName = document.querySelector('.chat-header .info .name');
+      if (hdrName) hdrName.textContent = currentOperatorName;
     }
   } catch {}
 
@@ -1550,6 +1560,7 @@ function openChatSession() {
     deviceUuid: selectedDevice.uuid,
     sessionId: selectedDevice.oblireach.sessions?.[0]?.id,
     operatorName: currentOperatorName,
+    operatorAvatar: currentOperatorAvatar || undefined,
   }, (res) => {
     if (res?.chatId) {
       chatId = res.chatId;
@@ -1619,9 +1630,11 @@ function renderChatMsg(msg) {
     const isOp = msg.sender === currentOperatorName;
     div.className = 'chat-msg ' + (isOp ? 'op' : 'user');
     if (isOp) {
-      div.innerHTML = '<div class="avatar" style="width:28px;height:28px;background:var(--accent);border-radius:50%%;display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
-        '<svg width="15" height="15" fill="white" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>' +
-        '</div><div class="bubble">' + esc(msg.text) + '</div>';
+      const avatarEl = currentOperatorAvatar
+        ? '<img src="' + esc(currentOperatorAvatar) + '" style="width:28px;height:28px;border-radius:50%%;object-fit:cover;flex-shrink:0" />'
+        : '<div class="avatar" style="width:28px;height:28px;background:var(--accent);border-radius:50%%;display:flex;align-items:center;justify-content:center;flex-shrink:0">' +
+          '<svg width="15" height="15" fill="white" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg></div>';
+      div.innerHTML = avatarEl + '<div class="bubble">' + esc(msg.text) + '</div>';
     } else {
       const initials = msg.sender.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
       div.innerHTML = '<div class="bubble">' + esc(msg.text) + '</div>' +

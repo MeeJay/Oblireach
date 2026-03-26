@@ -35,6 +35,16 @@ type ChatSession struct {
 
 var activeChats sync.Map // chatID → *ChatSession
 
+// chatLastParams stores the last known spawn parameters for each chat,
+// so we can respawn the helper even after the user closed it.
+type chatSpawnParams struct {
+	operatorName   string
+	operatorAvatar string
+	sessionID      int
+}
+
+var chatLastParams sync.Map // chatID → *chatSpawnParams
+
 func (cs *ChatSession) stop() {
 	cs.once.Do(func() {
 		close(cs.stopCh)
@@ -84,6 +94,13 @@ func startChat(cfg *Config, chatID, operatorName, operatorAvatar string, session
 	}
 	activeChats.Store(chatID, cs)
 
+	// Remember spawn params for respawn after user-close
+	chatLastParams.Store(chatID, &chatSpawnParams{
+		operatorName:   operatorName,
+		operatorAvatar: operatorAvatar,
+		sessionID:      sessionID,
+	})
+
 	// Accept the helper connection in background
 	go func() {
 		defer cs.stop()
@@ -124,12 +141,6 @@ func stopChat(chatID string) {
 }
 
 func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
-	v, ok := activeChats.Load(chatID)
-	if !ok {
-		return
-	}
-	cs := v.(*ChatSession)
-
 	msg, _ := json.Marshal(map[string]interface{}{
 		"action":       "operator_message",
 		"text":         message,
@@ -137,28 +148,46 @@ func forwardChatMessage(chatID, operatorName, message string, timestamp int64) {
 		"timestamp":    timestamp,
 	})
 
-	// Try to send — if the pipe is dead (user closed), respawn the helper
-	if cs.conn == nil || chatPipeSend(cs.conn, chatPipeMsg, msg) != nil {
+	v, ok := activeChats.Load(chatID)
+	if ok {
+		cs := v.(*ChatSession)
+		// Try to send — if the pipe is dead (user closed), respawn the helper
+		if cs.conn != nil && chatPipeSend(cs.conn, chatPipeMsg, msg) == nil {
+			return // sent OK
+		}
 		log.Printf("Chat %s: helper disconnected, respawning for new message", chatID)
-		// Clean up old session
 		cs.stop()
-		// Respawn — reuse the same chat session params
-		// The caller (push.go) already has the config
-		go func() {
-			if err := startChat(nil, chatID, cs.operatorName, cs.operatorAvatar, cs.sessionID); err != nil {
-				log.Printf("Chat %s: respawn failed: %v", chatID, err)
-				return
-			}
-			// Wait for helper to connect, then send the pending message
-			time.Sleep(2 * time.Second)
-			if v2, ok := activeChats.Load(chatID); ok {
-				cs2 := v2.(*ChatSession)
-				if cs2.conn != nil {
-					chatPipeSend(cs2.conn, chatPipeMsg, msg)
-				}
-			}
-		}()
+	} else {
+		log.Printf("Chat %s: not active, respawning for incoming message", chatID)
 	}
+
+	// Resolve spawn params: use saved params, fall back to what we have
+	spawnName := operatorName
+	spawnAvatar := ""
+	spawnSession := -1
+	if p, ok := chatLastParams.Load(chatID); ok {
+		sp := p.(*chatSpawnParams)
+		if spawnName == "" {
+			spawnName = sp.operatorName
+		}
+		spawnAvatar = sp.operatorAvatar
+		spawnSession = sp.sessionID
+	}
+
+	go func() {
+		if err := startChat(nil, chatID, spawnName, spawnAvatar, spawnSession); err != nil {
+			log.Printf("Chat %s: respawn failed: %v", chatID, err)
+			return
+		}
+		// Wait for helper to connect, then send the pending message
+		time.Sleep(2 * time.Second)
+		if v2, ok := activeChats.Load(chatID); ok {
+			cs2 := v2.(*ChatSession)
+			if cs2.conn != nil {
+				chatPipeSend(cs2.conn, chatPipeMsg, msg)
+			}
+		}
+	}()
 }
 
 func forwardChatFile(chatID string, payload map[string]interface{}) {

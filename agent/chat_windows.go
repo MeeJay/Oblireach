@@ -41,12 +41,25 @@ func chatIsFrench() bool {
 var (
 	chatProcCreateRoundRgn = syscall.NewLazyDLL("gdi32.dll").NewProc("CreateRoundRectRgn")
 	chatProcSetWindowRgn   = chatUser32.NewProc("SetWindowRgn")
+	chatProcShowWindow     = chatUser32.NewProc("ShowWindow")
 )
 
 func chatMakePopup(title string) {
 	titleW, _ := syscall.UTF16PtrFromString(title)
-	hwnd, _, _ := chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
+
+	// Poll for the window handle (WebView2 may take a moment to create it)
+	var hwnd uintptr
+	for i := 0; i < 60; i++ {
+		hwnd, _, _ = chatProcFindWindowW.Call(0, uintptr(unsafe.Pointer(titleW)))
+		if hwnd != 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if hwnd == 0 { return }
+
+	// Hide immediately so the user never sees the unstyled window
+	chatProcShowWindow.Call(hwnd, 0) // SW_HIDE
 
 	const gwlStyle = ^uintptr(15)   // GWL_STYLE = -16
 	const gwlExStyle = ^uintptr(19) // GWL_EXSTYLE = -20
@@ -75,6 +88,9 @@ func chatMakePopup(title string) {
 	y := int(wa.Bottom) - 520 - 16
 	chatProcSetWindowPos.Call(hwnd, ^uintptr(0),
 		uintptr(x), uintptr(y), 380, 520, 0x0040)
+
+	// Show the fully styled window
+	chatProcShowWindow.Call(hwnd, 8) // SW_SHOWNA (show without activating)
 }
 
 var chatConn net.Conn
@@ -225,9 +241,8 @@ func runChatHelperMode(addr, chatID, operatorName string) {
 	defer w.Destroy()
 
 	// Make the window borderless, positioned bottom-right, topmost
-	// We need a slight delay for the window to be created
+	// chatMakePopup polls for the HWND, hides it, styles it, then shows it
 	go func() {
-		time.Sleep(500 * time.Millisecond)
 		chatMakePopup(windowTitle)
 	}()
 
@@ -477,12 +492,9 @@ function addMessage(text, initials, isOp) {
   msgs.appendChild(row);
   msgs.scrollTop = msgs.scrollHeight;
 
-  // Update unread badge when in bubble mode
+  // Auto-restore chat when operator sends a message while minimized
   if (isMinimized && isOp) {
-    unreadCount++;
-    const badge = document.getElementById('unread-badge');
-    badge.textContent = unreadCount;
-    badge.style.display = 'flex';
+    restoreChat();
   }
 }
 
