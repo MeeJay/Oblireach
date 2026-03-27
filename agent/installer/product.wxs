@@ -68,7 +68,7 @@
         <Component Id="CodecDLLs" Guid="F9A0B1C2-D3E4-5678-FA01-012345670010">
           <File Id="OpenH264Dll"      Source="dist\openh264-2.4.1-win64.dll"  Name="openh264-2.4.1-win64.dll" />
           <File Id="LibVpxDll"        Source="dist\libvpx-1.dll"              Name="libvpx-1.dll" />
-          <File Id="Libx265Dll"       Source="dist\libx265-215.dll"           Name="libx265-215.dll" />
+          <!-- libx265 excluded: GPL v2 — users who need H.265 must supply their own DLL -->
           <File Id="LibSvtAv1Dll"     Source="dist\libSvtAv1Enc-2.dll"       Name="libSvtAv1Enc-2.dll" />
           <File Id="LibWinPthreadDll" Source="dist\libwinpthread-1.dll"       Name="libwinpthread-1.dll" />
           <File Id="LibStdcppDll"     Source="dist\libstdc++-6.dll"           Name="libstdc++-6.dll" />

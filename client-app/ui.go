@@ -1,13 +1,20 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 )
 
+//go:embed logo-login.svg
+var logoLoginSVG string
+
+//go:embed logo-icon.svg
+var logoIconSVG string
+
 // buildUI returns the full single-page HTML application embedded in the desktop client.
 func buildUI(cfg *Config) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
+	html := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -32,8 +39,8 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 
 /* ── Top bar ── */
 .topbar{height:44px;background:linear-gradient(90deg,#161b22,#1c2128);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0}
-.topbar .logo{font-weight:700;font-size:15px;color:var(--accent-l);letter-spacing:.5px;margin-right:auto;display:flex;align-items:center;gap:6px}
-.topbar .logo svg{width:20px;height:20px}
+.topbar .logo{margin-right:auto;display:flex;align-items:center}
+.topbar .logo svg{height:24px;width:auto}
 .topbar .server-info{font-size:11px;color:var(--muted2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .btn-sm{padding:5px 12px;border-radius:10px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--muted);font-size:11px;cursor:pointer;transition:all .15s}
 .btn-sm:hover{background:rgba(255,255,255,.08);color:var(--text);border-color:rgba(255,255,255,.15)}
@@ -216,11 +223,8 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 <!-- Login overlay -->
 <div id="login-overlay">
   <div class="login-box">
-    <h2>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      Oblireach
-    </h2>
-    <p>Connect to your Obliance server</p>
+    <div style="text-align:center;padding:4px 0 0" id="login-logo"></div>
+    <p style="font-size:12px;color:var(--muted);text-align:center;margin-top:-4px">Connect to your Obliance server</p>
     <div class="form-group">
       <label>Server URL</label>
       <input id="inp-server" type="url" placeholder="https://obliance.example.com" value="%s"/>
@@ -234,6 +238,9 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
         <label>Password</label>
         <input id="inp-pass" type="password" placeholder=""/>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;padding:2px 0">
+        <input type="checkbox" id="inp-remember" checked style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer" /> Remember me
+      </label>
       <div class="err-msg" id="login-err"></div>
       <button class="btn-primary" id="btn-login">Connect</button>
     </div>
@@ -248,10 +255,7 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 <!-- Main app -->
 <div id="app" style="display:none;flex-direction:column;height:100%%">
   <div class="topbar">
-    <span class="logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      Oblireach
-    </span>
+    <span class="logo" id="topbar-logo"></span>
     <span class="server-info" id="top-server"></span>
     <button class="btn-sm chat-toggle" id="btn-chat" style="display:none" title="Chat">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -467,7 +471,8 @@ async function doLogin() {
   btn.disabled = true; btn.textContent = 'Connecting...'; errEl.textContent = '';
   try {
     await fetch('/local/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverUrl: server, username }) });
-    const r = await api('POST', '/api/auth/login', { username, password });
+    const remember = document.getElementById('inp-remember').checked;
+    const r = await api('POST', '/api/auth/login', { username, password, remember });
     const data = await r.json();
     if (!r.ok || !data.success) { errEl.textContent = data.error || 'Login failed'; return; }
     document.getElementById('top-server').textContent = server;
@@ -1758,7 +1763,14 @@ function playNotifSound() {
 document.getElementById('btn-logout').addEventListener('click', async () => {
   stopRemote(); closeChat();
   await fetch('/local/logout', { method: 'POST' });
-  location.reload();
+  // Show login overlay with SSO check instead of full page reload
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-overlay').style.display = 'flex';
+  document.getElementById('inp-pass').value = '';
+  document.getElementById('login-err').textContent = '';
+  document.getElementById('sso-err').textContent = '';
+  const server = document.getElementById('inp-server').value.trim();
+  if (server) checkSso();
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -1783,6 +1795,32 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 		esc(cfg.ServerURL),
 		esc(cfg.Username),
 	)
+
+	// Inject embedded SVG logos (done via Replace, not Sprintf, because SVGs may contain %)
+	// Both SVGs use Illustrator-generated class names (.cls-1, .cls-2, etc.) that would
+	// conflict when both are inline in the same HTML. Prefix each to scope them.
+
+	// Login logo: prefix cls- → lcls-
+	loginSVG := strings.TrimPrefix(logoLoginSVG, `<?xml version="1.0" encoding="UTF-8"?>`)
+	loginSVG = strings.TrimSpace(loginSVG)
+	loginSVG = strings.ReplaceAll(loginSVG, "cls-", "lcls-")
+	loginSVG = strings.Replace(loginSVG, "<svg ", `<svg style="width:260px;height:auto" `, 1)
+	html = strings.Replace(html, `<div style="text-align:center;padding:4px 0 0" id="login-logo"></div>`,
+		`<div style="text-align:center;padding:4px 0 0" id="login-logo">`+loginSVG+`</div>`, 1)
+
+	// Topbar logo: same full logo as login, sized to fit the 44px topbar.
+	// Must also prefix gradient/element IDs to avoid conflicts with the login copy.
+	topbarSVG := strings.TrimPrefix(logoLoginSVG, `<?xml version="1.0" encoding="UTF-8"?>`)
+	topbarSVG = strings.TrimSpace(topbarSVG)
+	topbarSVG = strings.ReplaceAll(topbarSVG, "cls-", "tcls-")
+	topbarSVG = strings.ReplaceAll(topbarSVG, `id="`, `id="tb_`)
+	topbarSVG = strings.ReplaceAll(topbarSVG, `url(#`, `url(#tb_`)
+	topbarSVG = strings.ReplaceAll(topbarSVG, `xlink:href="#`, `xlink:href="#tb_`)
+	topbarSVG = strings.Replace(topbarSVG, "<svg ", `<svg style="height:24px;width:auto" `, 1)
+	html = strings.Replace(html, `<span class="logo" id="topbar-logo"></span>`,
+		`<span class="logo" id="topbar-logo">`+topbarSVG+`</span>`, 1)
+
+	return html
 }
 
 func esc(s string) string {

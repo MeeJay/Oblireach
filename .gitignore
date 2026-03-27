@@ -14,7 +14,13 @@ agent/bin/*.exe
 agent/*.exe
 !desktop-app/dist/
 .env
+.build.cfg
 *.log
+
+# H.265/x265 codec (GPL v2 — not distributed, user-supplied only)
+x265-prebuilt/
+agent/dist/libx265*.dll
+libx265*.dll
 .DS_Store
 Thumbs.db
 coverage/

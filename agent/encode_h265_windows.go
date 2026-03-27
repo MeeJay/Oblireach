@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && h265
 
 package main
 

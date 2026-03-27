@@ -1,8 +1,8 @@
-//go:build !windows
+//go:build !h265
 
 package main
 
-func h265Available() bool                                                   { return false }
-func h265EncoderInit(width, height, fps, bitrateKbps int) error            { return nil }
-func h265EncodeFrame(bgra []byte, width, height int) ([]byte, error)       { return nil, nil }
-func h265EncoderClose()                                                     {}
+func h265Available() bool                                             { return false }
+func h265EncoderInit(width, height, fps, bitrateKbps int) error      { return nil }
+func h265EncodeFrame(bgra []byte, width, height int) ([]byte, error) { return nil, nil }
+func h265EncoderClose()                                              {}

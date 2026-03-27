@@ -265,12 +265,20 @@ func (s *StreamSession) run() {
 	setInputMonitorOffset(monOffX, monOffY)
 
 	// ── Send init message ─────────────────────────────────────────────────────
+	// Build list of available codecs so the viewer only shows what this agent supports
+	availCodecs := []string{"h264", "jpeg"}
+	if h265Available() {
+		availCodecs = append(availCodecs, "h265")
+	}
+	availCodecs = append(availCodecs, "vp9", "av1") // always compiled in
+
 	initMsg := map[string]interface{}{
 		"type":       "init",
 		"width":      width,
 		"height":     height,
 		"fps":        fps,
 		"codec":      "h264",
+		"codecs":     availCodecs,
 		"monitors":   enumerateMonitors(),
 		"audioRate":  audioSampleRate(),
 		"audioAvail": audioInitDone,
@@ -499,7 +507,8 @@ func (s *StreamSession) run() {
 			// Send new init to browser
 			reInit := map[string]interface{}{
 				"type": "init", "width": width, "height": height,
-				"fps": fps, "codec": "h264", "monitors": enumerateMonitors(),
+				"fps": fps, "codec": "h264", "codecs": availCodecs,
+				"monitors": enumerateMonitors(),
 			}
 			reInitJSON, _ := json.Marshal(reInit)
 			_ = s.ws.WriteFrame(0x1, reInitJSON)
