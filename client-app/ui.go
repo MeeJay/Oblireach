@@ -137,9 +137,9 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .chat-msg.user .bubble{background:var(--bg3);color:white;border-bottom-right-radius:4px}
 .chat-msg.sys{align-self:center;max-width:100%%}
 .chat-msg.sys .bubble{background:rgba(250,204,21,.1);color:rgba(250,204,21,.8);font-size:11px;padding:4px 12px;border-radius:20px}
-.chat-typing{display:none;align-self:flex-start;gap:8px;align-items:flex-end;padding:0 2px}
+.chat-typing{display:none;align-self:flex-end;gap:8px;align-items:flex-end;flex-direction:row-reverse;padding:0 2px}
 .chat-typing.visible{display:flex}
-.chat-typing-dots{display:flex;gap:3px;padding:8px 14px;background:var(--accent);border-radius:16px 16px 16px 4px}
+.chat-typing-dots{display:flex;gap:3px;padding:8px 14px;background:var(--bg3);border-radius:16px 16px 4px 16px}
 .chat-typing-dots span{width:5px;height:5px;border-radius:50%%;background:rgba(255,255,255,.5);animation:chatTypeBounce 1.2s infinite}
 .chat-typing-dots span:nth-child(2){animation-delay:.2s}
 .chat-typing-dots span:nth-child(3){animation-delay:.4s}
@@ -1254,6 +1254,8 @@ function toggleRecording() {
     clearInterval(recTimerInterval); recTimerInterval = null;
     if (recInd) recInd.classList.remove('active');
     if (recBtn) recBtn.style.color = '';
+    // Tell agent to switch watermark back to LIVE
+    if (remoteWs && remoteWs.readyState === 1) remoteWs.send(JSON.stringify({ type: 'set_recording', recording: false }));
     return;
   }
   // Start recording
@@ -1285,6 +1287,8 @@ function toggleRecording() {
   recMediaRecorder.start(1000);
   if (recInd) recInd.classList.add('active');
   if (recBtn) recBtn.style.color = 'var(--danger)';
+  // Tell agent to switch watermark to REC
+  if (remoteWs && remoteWs.readyState === 1) remoteWs.send(JSON.stringify({ type: 'set_recording', recording: true }));
   recTimerInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
     const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');

@@ -9,14 +9,20 @@ package main
 #include <stdlib.h>
 #include <string.h>
 
-#define WM_REC_W 90
-#define WM_REC_H 28
+#define WM_PILL_W 90
+#define WM_PILL_H 28
+#define WM_USER_SET_MODE (WM_USER + 1)
 
 static HWND g_watermark = NULL;
 static HFONT g_wm_font = NULL;
+static int g_wm_recording = 0; // 0 = LIVE, 1 = REC
 
 static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_USER_SET_MODE:
+        g_wm_recording = (int)wp;
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -26,28 +32,29 @@ static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(20, 20, 30));
         SelectObject(hdc, bgBr);
         SelectObject(hdc, bgPen);
-        RoundRect(hdc, 0, 0, WM_REC_W, WM_REC_H, 14, 14);
+        RoundRect(hdc, 0, 0, WM_PILL_W, WM_PILL_H, 14, 14);
         DeleteObject(bgBr);
         DeleteObject(bgPen);
 
-        // Red dot (recording indicator)
-        HBRUSH redBr = CreateSolidBrush(RGB(239, 68, 68));
-        HPEN redPen = CreatePen(PS_SOLID, 1, RGB(239, 68, 68));
-        SelectObject(hdc, redBr);
-        SelectObject(hdc, redPen);
+        // Dot color: red for REC, green for LIVE
+        COLORREF dotColor = g_wm_recording ? RGB(239, 68, 68) : RGB(74, 222, 128);
+        HBRUSH dotBr = CreateSolidBrush(dotColor);
+        HPEN dotPen = CreatePen(PS_SOLID, 1, dotColor);
+        SelectObject(hdc, dotBr);
+        SelectObject(hdc, dotPen);
         Ellipse(hdc, 10, 8, 22, 20);
-        DeleteObject(redBr);
-        DeleteObject(redPen);
+        DeleteObject(dotBr);
+        DeleteObject(dotPen);
 
-        // "REC" text
+        // Text
         SetBkMode(hdc, TRANSPARENT);
         if (!g_wm_font)
             g_wm_font = CreateFontW(-12, 0, 0, 0, FW_BOLD, 0, 0, 0,
                 DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SelectObject(hdc, g_wm_font);
-        SetTextColor(hdc, RGB(239, 68, 68));
-        RECT rc = {26, 5, WM_REC_W - 4, WM_REC_H - 4};
-        DrawTextW(hdc, L"REC", -1, &rc, DT_LEFT | DT_SINGLELINE);
+        SetTextColor(hdc, dotColor);
+        RECT rc = {26, 5, WM_PILL_W - 4, WM_PILL_H - 4};
+        DrawTextW(hdc, g_wm_recording ? L"REC" : L"LIVE", -1, &rc, DT_LEFT | DT_SINGLELINE);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -72,18 +79,26 @@ static void show_watermark_rec(void) {
 
     RECT wa;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    int x = wa.right - WM_REC_W - 12;
+    int x = wa.right - WM_PILL_W - 12;
     int y = wa.top + 8;
 
     g_watermark = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
         L"OblireachRec", NULL,
         WS_POPUP | WS_VISIBLE,
-        x, y, WM_REC_W, WM_REC_H,
+        x, y, WM_PILL_W, WM_PILL_H,
         NULL, NULL, wc.hInstance, NULL);
 
     if (g_watermark) {
         SetLayeredWindowAttributes(g_watermark, 0, 200, LWA_ALPHA);
+    }
+}
+
+// set_watermark_mode: switch between LIVE (0) and REC (1).
+// Safe to call from any thread.
+static void set_watermark_mode(int recording) {
+    if (g_watermark) {
+        PostMessageW(g_watermark, WM_USER_SET_MODE, (WPARAM)recording, 0);
     }
 }
 
@@ -145,5 +160,15 @@ func showWatermark(operatorName string) {
 func hideWatermark() {
 	if watermarkRunning {
 		C.stop_watermark_pump()
+	}
+}
+
+func setWatermarkRecording(recording bool) {
+	if watermarkRunning {
+		v := C.int(0)
+		if recording {
+			v = 1
+		}
+		C.set_watermark_mode(v)
 	}
 }

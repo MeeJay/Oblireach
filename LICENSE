@@ -72,7 +72,7 @@ The following clarifications are provided for guidance and do not modify the lic
 
 ## Third-Party Notices
 
-ObliReach includes or dynamically loads the following third-party libraries. Their respective licenses apply only to those components.
+Oblireach includes or dynamically loads the following third-party libraries. Their respective licenses apply only to those components.
 
 ### OpenH264 — BSD 2-Clause
 
@@ -131,4 +131,4 @@ x265 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY
 
 The full text of the GNU General Public License v2.0 is available at: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 
-**Note:** x265 is an optional component. It is not included in default builds. Its GPL license applies solely to the x265 library itself and does not extend to the rest of ObliReach.
+**Note:** x265 is an optional component. It is not included in default builds. Its GPL license applies solely to the x265 library itself and does not extend to the rest of Oblireach.

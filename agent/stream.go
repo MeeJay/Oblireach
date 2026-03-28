@@ -316,7 +316,7 @@ func (s *StreamSession) run() {
 	defer audioClose()
 	if audioInitDone {
 		go func() {
-			ticker := time.NewTicker(20 * time.Millisecond) // 50 fps audio chunks
+			ticker := time.NewTicker(50 * time.Millisecond) // 20 fps audio chunks (bigger, cleaner)
 			defer ticker.Stop()
 			for {
 				select {
@@ -354,13 +354,17 @@ func (s *StreamSession) run() {
 				_ = s.ws.SendPong(payload)
 			case 0x1: // text = JSON control
 				var peek struct {
-					Type  string `json:"type"`
-					Codec string `json:"codec"`
-					Index int    `json:"index"`
-					Block bool   `json:"block"`
+					Type      string `json:"type"`
+					Codec     string `json:"codec"`
+					Index     int    `json:"index"`
+					Block     bool   `json:"block"`
+					Recording bool   `json:"recording"`
 				}
 				if json.Unmarshal(payload, &peek) == nil {
 					switch peek.Type {
+					case "set_recording":
+						setWatermarkRecording(peek.Recording)
+						continue
 					case "set_codec":
 						select { case codecCh <- peek.Codec: default: }
 						continue

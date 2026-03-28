@@ -46,7 +46,7 @@ static int audio_init(void) {
     if (FAILED(hr)) return -4;
 
     // Initialize in loopback mode (capture system audio output)
-    REFERENCE_TIME bufDuration = 200000; // 20ms buffer
+    REFERENCE_TIME bufDuration = 1000000; // 100ms buffer (10 * 100ns units)
     hr = IAudioClient_Initialize(g_audioClient, AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_LOOPBACK, bufDuration, 0, g_audioFmt, NULL);
     if (FAILED(hr)) return -5;
@@ -136,7 +136,7 @@ import (
 	"unsafe"
 )
 
-const audioMaxBuf = 64 * 1024 // 64KB audio buffer
+const audioMaxBuf = 128 * 1024 // 128KB audio buffer
 
 var (
 	audioInitDone bool
