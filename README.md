@@ -71,13 +71,13 @@ All codecs are loaded dynamically via `LoadLibrary` at runtime - no compile-time
 | VP9 | libvpx | BSD 3-Clause | Yes |
 | AV1 | SVT-AV1 | BSD 3-Clause Clear | Yes |
 | JPEG | Pure Go | N/A | Yes (built-in) |
-| H.265 | x265 | GPL v2 | No (opt-in build flag) |
+| H.265 | x265 | GPL v2 | No (custom build only) |
 
 **Automatic fallback chain:** OpenH264 → WMF H.264 → JPEG (if encoder produces 0 output after 30 frames).
 
 ### H.265 Support (Optional)
 
-H.265 is behind a build tag due to its GPL v2 license. It is **not included** in default builds or the MSI installer. Users who need H.265 can supply their own `libx265-215.dll` in the agent directory - the encoder will be detected and loaded automatically at runtime.
+H.265 support is opt-in due to the GPL v2 license of libx265. It is not included in default builds or the MSI installer. To enable it, place your own libx265-215.dll in the agent directory — it will be detected and loaded automatically at runtime.
 
 ---
 
@@ -121,7 +121,7 @@ Native Windows application (WebView2) for operators to connect to remote devices
 - **NeonUI** dark charcoal theme
 - **10 built-in tools**: Screenshot, Clipboard Sync, Performance HUD, Zoom/Scale, System Keys, Session Recording, Quick Actions, Annotation/Whiteboard, Favorites/Recent, Multi-Tab Sessions
 - **Chat panel** with typing indicators and operator avatar
-- **SSO login** via Obliance Obligate or local credentials with "Remember me"
+- **SSO login/LDAP** via Obligate or local credentials
 - **MSI installer** with Desktop & Start Menu shortcuts
 
 ---
