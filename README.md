@@ -216,7 +216,6 @@ Oblireach/
 │   ├── ui.go                 # Embedded HTML/CSS/JS viewer
 │   ├── proxy.go              # HTTP/WebSocket proxy to Obliance
 │   └── installer/product.wxs # WiX MSI template
-└── 000-Build-Agent.bat       # Multi-platform build script
 ```
 
 ---
@@ -227,4 +226,6 @@ Oblireach/
 
 ---
 
-> Built with [Claude Code](https://claude.ai/claude-code)
+> **An experiment with Claude Code**
+>
+> This project was built as an experiment to see how far Claude Code could be pushed as a development tool. Claude was used as a coding assistant throughout the entire development process.
