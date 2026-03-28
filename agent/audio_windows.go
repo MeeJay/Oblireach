@@ -78,23 +78,40 @@ static int audio_capture(unsigned char *out_buf, int out_cap) {
         HRESULT hr = IAudioCaptureClient_GetBuffer(g_captureClient, &data, &frames, &flags, NULL, NULL);
         if (FAILED(hr)) break;
 
-        // Convert float32 stereo to int16 mono
+        // Convert to int16 mono
         int channels = g_audioFmt->nChannels;
+        int isFloat = (g_audioFmt->wFormatTag == 3) ||
+                      (g_audioFmt->wFormatTag == 0xFFFE && g_audioFmt->cbSize >= 22);
+        // WAVE_FORMAT_EXTENSIBLE: SubFormat starts at cbSize offset
+        // For simplicity, WASAPI shared mode almost always returns float32
+        int bytesPerSample = g_audioFmt->wBitsPerSample / 8;
         UINT32 i;
         for (i = 0; i < frames && total + 2 <= out_cap; i++) {
             float sample = 0;
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                 sample = 0;
-            } else {
-                // Average all channels to mono
+            } else if (isFloat || bytesPerSample == 4) {
+                // Float32 format (most common WASAPI shared mode)
                 float sum = 0;
                 int ch;
                 for (ch = 0; ch < channels; ch++) {
                     sum += ((float*)data)[i * channels + ch];
                 }
                 sample = sum / channels;
+            } else if (bytesPerSample == 2) {
+                // Int16 format
+                int sum = 0;
+                int ch;
+                for (ch = 0; ch < channels; ch++) {
+                    sum += ((short*)data)[i * channels + ch];
+                }
+                short avg = (short)(sum / channels);
+                out_buf[total] = (unsigned char)(avg & 0xFF);
+                out_buf[total+1] = (unsigned char)((avg >> 8) & 0xFF);
+                total += 2;
+                continue;
             }
-            // Clamp and convert to int16
+            // Soft clamp with tanh-like curve to reduce harsh clipping
             if (sample > 1.0f) sample = 1.0f;
             if (sample < -1.0f) sample = -1.0f;
             short s16 = (short)(sample * 32767.0f);

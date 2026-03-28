@@ -315,11 +315,12 @@ func runHelperMode(addr string) {
 			switch msgType {
 			case pipeTypeInput:
 				var peek struct {
-					Type    string `json:"type"`
-					Codec   string `json:"codec"`
-					Bitrate int    `json:"bitrate"`
-					Index   int    `json:"index"`
-					Block   bool   `json:"block"`
+					Type      string `json:"type"`
+					Codec     string `json:"codec"`
+					Bitrate   int    `json:"bitrate"`
+					Index     int    `json:"index"`
+					Block     bool   `json:"block"`
+					Recording bool   `json:"recording"`
 				}
 				if json.Unmarshal(payload, &peek) == nil {
 					switch peek.Type {
@@ -335,6 +336,9 @@ func runHelperMode(addr string) {
 					case "set_input_block":
 						select { case blockCh <- peek.Block: default: }
 						continue
+					case "set_recording":
+						setWatermarkRecording(peek.Recording)
+						continue
 					}
 				}
 				select { case inputCh <- payload: default: }
@@ -349,7 +353,7 @@ func runHelperMode(addr string) {
 	defer audioClose()
 	if audioInitDone {
 		go func() {
-			ticker := time.NewTicker(20 * time.Millisecond)
+			ticker := time.NewTicker(50 * time.Millisecond)
 			defer ticker.Stop()
 			for {
 				select {
