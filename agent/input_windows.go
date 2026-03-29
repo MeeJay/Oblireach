@@ -30,7 +30,8 @@ static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
     SendInput(1, &inp, sizeof(INPUT));
 }
 
-// send_mouse_button: press/release a mouse button (button: 0=left, 1=right, 2=middle).
+// send_mouse_button: press/release a mouse button.
+// button values match browser MouseEvent.button: 0=left, 1=middle, 2=right.
 static void send_mouse_button(int button, int down, int screen_w, int screen_h, int x, int y) {
     switch_to_active_desktop();
     INPUT inp = {0};
@@ -41,9 +42,9 @@ static void send_mouse_button(int button, int down, int screen_w, int screen_h, 
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
 
     switch (button) {
-    case 0: inp.mi.dwFlags |= down ? MOUSEEVENTF_LEFTDOWN  : MOUSEEVENTF_LEFTUP;   break;
-    case 1: inp.mi.dwFlags |= down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;  break;
-    case 2: inp.mi.dwFlags |= down ? MOUSEEVENTF_MIDDLEDOWN: MOUSEEVENTF_MIDDLEUP; break;
+    case 0: inp.mi.dwFlags |= down ? MOUSEEVENTF_LEFTDOWN   : MOUSEEVENTF_LEFTUP;   break;
+    case 1: inp.mi.dwFlags |= down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
+    case 2: inp.mi.dwFlags |= down ? MOUSEEVENTF_RIGHTDOWN  : MOUSEEVENTF_RIGHTUP;  break;
     }
     SendInput(1, &inp, sizeof(INPUT));
 }
@@ -77,11 +78,19 @@ static DWORD g_deskCheckTime = 0;
 
 static void switch_to_active_desktop(void) {
     DWORD now = GetTickCount();
-    if (now - g_deskCheckTime < 2000 && g_currentDesk != NULL) return;
+    if (now - g_deskCheckTime < 500 && g_currentDesk != NULL) return;
     g_deskCheckTime = now;
 
-    // Try to open the input desktop (the one receiving user input right now)
-    HDESK inputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    // Try to open the input desktop (the one receiving user input right now).
+    // Use DESKTOP_SWITCHDESKTOP for the access check — GENERIC_ALL can fail
+    // on the Secure Desktop (UAC prompt / Winlogon).
+    HDESK inputDesk = OpenInputDesktop(0, FALSE,
+        DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
+        DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU);
+    if (!inputDesk) {
+        // Fallback: try with minimal rights (enough for SetThreadDesktop + SendInput)
+        inputDesk = OpenInputDesktop(0, FALSE, DESKTOP_SWITCHDESKTOP);
+    }
     if (!inputDesk) return;
 
     // If it's different from our current desktop, switch

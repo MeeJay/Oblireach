@@ -231,6 +231,12 @@ func runHelperMode(addr string) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	// Log the helper's identity to help diagnose UIPI issues.
+	// SYSTEM token = highest integrity, bypasses UIPI for admin windows.
+	if u, err := os.UserHomeDir(); err == nil {
+		log.Printf("helper: running as user home=%s", u)
+	}
+
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
 		log.Fatalf("helper: captureInit failed: %v", err)

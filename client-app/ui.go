@@ -938,6 +938,7 @@ function renderRemoteTab(tc) {
   canvas.addEventListener('mousedown', e => { if (!annotationActive) sendInput('mousedown', e, canvas); });
   canvas.addEventListener('mouseup', e => { if (!annotationActive) sendInput('mouseup', e, canvas); });
   canvas.addEventListener('wheel', e => { if (!annotationActive) { e.preventDefault(); sendInput('wheel', e, canvas); } }, { passive: false });
+  canvas.addEventListener('contextmenu', e => { e.preventDefault(); }); // prevent browser right-click menu
   canvas.addEventListener('keydown', e => { if (!annotationActive) { e.preventDefault(); sendInputKey('keydown', e); } });
   canvas.addEventListener('keyup', e => { if (!annotationActive) { e.preventDefault(); sendInputKey('keyup', e); } });
   canvas.setAttribute('tabindex', '0');
