@@ -103,6 +103,16 @@ static void switch_to_active_desktop(void) {
     }
 }
 
+// force_switch_active_desktop: bypasses the 500ms cache and re-attaches the
+// calling thread to the current input desktop. Used before re-initialising
+// DXGI capture after ACCESS_LOST (UAC prompt / workstation lock / login).
+// Windows refs the thread's desktop internally so CloseDesktop inside the
+// switch is safe even while SendInput is running on this thread.
+static void force_switch_active_desktop(void) {
+    g_deskCheckTime = 0;
+    switch_to_active_desktop();
+}
+
 // get_virtual_screen_size: returns the full virtual desktop dimensions.
 static void get_virtual_screen_size(int *w, int *h, int *ox, int *oy) {
     *w  = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -288,4 +298,12 @@ func inputUnblock() {
 		C.block_user_input(0)
 		inputIsBlocked = false
 	}
+}
+
+// inputSwitchActiveDesktop re-attaches the current OS thread to whichever
+// desktop is currently receiving user input (Default, Winlogon/Secure Desktop,
+// or the screensaver). Must be called on a LockOSThread goroutine. Used by
+// the capture layer before re-initialising DXGI after DXGI_ERROR_ACCESS_LOST.
+func inputSwitchActiveDesktop() {
+	C.force_switch_active_desktop()
 }

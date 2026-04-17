@@ -4,11 +4,12 @@ package main
 
 // SessionInfo describes a logon session (non-Windows stub).
 type SessionInfo struct {
-	ID          int    `json:"id"`
-	Username    string `json:"username"`
-	State       string `json:"state"`
-	StationName string `json:"stationName,omitempty"`
-	IsConsole   bool   `json:"isConsole"`
+	ID            int    `json:"id"`
+	Username      string `json:"username"`
+	State         string `json:"state"`
+	StationName   string `json:"stationName,omitempty"`
+	IsConsole     bool   `json:"isConsole"`
+	IsLoginPrompt bool   `json:"isLoginPrompt,omitempty"`
 }
 
 func enumerateSessions() []SessionInfo         { return nil }
@@ -16,3 +17,4 @@ func consoleSessionID() int                    { return 0 }
 func currentSessionID() int                    { return 0 }
 func findCaptureSession() int                  { return 0 }
 func spawnInSessionGo(sessionID int, cmdLine string) (uint32, int) { return 0, -1 }
+func IsServer() bool                           { return false }

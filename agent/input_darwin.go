@@ -108,6 +108,8 @@ func clipboardSet(text string) {}         // TODO: NSPasteboard
 func inputBlock(block bool) {}
 func inputUnblock()         {}
 
+func inputSwitchActiveDesktop() {} // Windows-only concept
+
 // vkToMacKeycode maps Windows VK codes to macOS key codes.
 func vkToMacKeycode(vk int) int {
 	m := map[int]int{

@@ -282,6 +282,16 @@ static int capture_init(void) {
     return capture_init_monitor(0);
 }
 
+// capture_reinit_current: re-initialises capture on the currently tracked
+// monitor (g_target_monitor). Used by the recovery path after DXGI_ERROR_
+// ACCESS_LOST (UAC prompt / workstation lock / login screen transition).
+// Caller is expected to re-attach the thread to the active input desktop
+// first (via inputSwitchActiveDesktop on the Go side) so that DXGI can
+// duplicate whichever desktop is currently visible.
+static int capture_reinit_current(void) {
+    return capture_init_monitor(g_target_monitor);
+}
+
 static void capture_get_size(int *w, int *h) {
     *w = g_width;
     *h = g_height;
@@ -482,9 +492,13 @@ func captureFrame(buf []byte) (width, height int, err error) {
 		return width, height, fmt.Errorf("no new frame")
 	}
 	if ret < 0 {
-		// Fatal — attempt reinitialise (DXGI access lost, or GDI error)
+		// DXGI_ERROR_ACCESS_LOST happens when the input desktop changes
+		// (UAC Secure Desktop, workstation lock, login screen). Re-attach
+		// this thread to the active desktop before recreating DXGI so the
+		// duplication targets the currently visible desktop.
 		C.capture_close()
-		if rc := int(C.capture_init()); rc < 0 {
+		inputSwitchActiveDesktop()
+		if rc := int(C.capture_reinit_current()); rc < 0 {
 			return 0, 0, fmt.Errorf("capture reinit failed (code %d)", rc)
 		}
 		return width, height, fmt.Errorf("no new frame")

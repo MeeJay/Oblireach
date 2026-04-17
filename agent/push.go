@@ -20,6 +20,7 @@ type pushPayload struct {
 	OS         string        `json:"os"`
 	Arch       string        `json:"arch"`
 	Version    string        `json:"version"`
+	IsServer   bool          `json:"isServer"`
 	Sessions   []SessionInfo `json:"sessions,omitempty"`
 }
 
@@ -54,6 +55,7 @@ func doPush(cfg *Config, client *http.Client) error {
 		OS:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
 		Version:    agentVersion,
+		IsServer:   IsServer(),
 		Sessions:   enumerateSessions(),
 	}
 

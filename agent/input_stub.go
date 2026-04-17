@@ -13,3 +13,4 @@ func clipboardGet() string                               { return "" }
 func clipboardSet(text string)                           {}
 func inputBlock(block bool)                             {}
 func inputUnblock()                                     {}
+func inputSwitchActiveDesktop()                         {}

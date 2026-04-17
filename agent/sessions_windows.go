@@ -6,6 +6,7 @@ package main
 #cgo LDFLAGS: -lwtsapi32
 #include <windows.h>
 #include <wtsapi32.h>
+#include <versionhelpers.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,17 +61,36 @@ static DWORD getMySessionID(void) {
 	ProcessIdToSessionId(GetCurrentProcessId(), &id);
 	return id;
 }
+
+// isWindowsServer returns 1 if this host is a Windows Server SKU
+// (Server / Server Core / Server RDS), 0 for workstation/client SKUs.
+// Uses VerifyVersionInfoW to avoid the manifest-gated GetVersionEx lies.
+static int isWindowsServer(void) {
+	OSVERSIONINFOEXW osvi;
+	ZeroMemory(&osvi, sizeof(osvi));
+	osvi.dwOSVersionInfoSize = sizeof(osvi);
+	osvi.wProductType = VER_NT_WORKSTATION;
+	DWORDLONG mask = VerSetConditionMask(0, VER_PRODUCT_TYPE, VER_EQUAL);
+	// If VerifyVersionInfo returns FALSE, the OS is NOT a workstation, i.e.
+	// it is a server (Windows Server / Domain Controller).
+	return VerifyVersionInfoW(&osvi, VER_PRODUCT_TYPE, mask) ? 0 : 1;
+}
 */
 import "C"
 import "unsafe"
 
 // SessionInfo describes a Windows logon session.
+//
+// IsLoginPrompt is true when the session is sitting at Winlogon with no
+// user logged in — picking it as a capture target shows the login screen.
+// On RDS hosts this is the "connect to a fresh session" use case.
 type SessionInfo struct {
-	ID          int    `json:"id"`
-	Username    string `json:"username"`
-	State       string `json:"state"`
-	StationName string `json:"stationName,omitempty"`
-	IsConsole   bool   `json:"isConsole"`
+	ID            int    `json:"id"`
+	Username      string `json:"username"`
+	State         string `json:"state"`
+	StationName   string `json:"stationName,omitempty"`
+	IsConsole     bool   `json:"isConsole"`
+	IsLoginPrompt bool   `json:"isLoginPrompt,omitempty"`
 }
 
 func wtsStateName(n int) string {
@@ -109,6 +129,8 @@ func enumerateSessions() []SessionInfo {
 	arr := (*[1 << 16]C.sessionDetail)(unsafe.Pointer(pArr))[:n:n]
 	conID := uint32(C.getConsoleSessionID())
 
+	isServer := C.isWindowsServer() != 0
+
 	var out []SessionInfo
 	for i := 0; i < n; i++ {
 		s := arr[i]
@@ -124,20 +146,42 @@ func enumerateSessions() []SessionInfo {
 		if s.sessionId == 0 {
 			continue
 		}
-		// Skip anonymous sessions that are not currently Active.
-		if username == "" && state != 0 {
-			continue
+		// Empty-username sessions are either pre-login (Winlogon showing the
+		// sign-in prompt) or truly idle slots. Expose them only as a "login
+		// prompt" target: the operator can pick one to drive a new login,
+		// useful on RDS hosts and when a workstation is at the lock screen
+		// with no cached user.
+		loginPrompt := false
+		if username == "" {
+			// Only Connected/ConnectQuery make sense as login targets.
+			// Disconnected without a username is usually a listener slot.
+			if state != 1 && state != 2 {
+				continue
+			}
+			// On workstations we typically have a single console session —
+			// an empty-username Connected session there is almost always
+			// the logon screen. On RDS any Connected-empty slot is fair game.
+			if !isServer && uint32(s.sessionId) != conID {
+				continue
+			}
+			loginPrompt = true
 		}
 		out = append(out, SessionInfo{
-			ID:          int(s.sessionId),
-			Username:    username,
-			State:       wtsStateName(state),
-			StationName: stationName,
-			IsConsole:   uint32(s.sessionId) == conID,
+			ID:            int(s.sessionId),
+			Username:      username,
+			State:         wtsStateName(state),
+			StationName:   stationName,
+			IsConsole:     uint32(s.sessionId) == conID,
+			IsLoginPrompt: loginPrompt,
 		})
 	}
 	return out
 }
+
+// IsServer returns true if this host is a Windows Server SKU.
+// Obliance uses this to offer the RDS session picker (shadow an existing
+// user session vs. drive a new login).
+func IsServer() bool { return C.isWindowsServer() != 0 }
 
 // consoleSessionID returns the physical console session ID.
 func consoleSessionID() int { return int(C.getConsoleSessionID()) }

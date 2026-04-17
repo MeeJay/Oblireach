@@ -128,6 +128,8 @@ func clipboardSet(text string) {}         // TODO: X11 clipboard
 func inputBlock(block bool) {}            // Not available on Linux
 func inputUnblock()         {}
 
+func inputSwitchActiveDesktop() {} // Windows-only concept
+
 // vkToKeysym maps Windows VK codes to X11 keysyms for common keys.
 func vkToKeysym(vk int) uint {
 	m := map[int]uint{

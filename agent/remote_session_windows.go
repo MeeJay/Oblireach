@@ -237,6 +237,12 @@ func runHelperMode(addr string) {
 		log.Printf("helper: running as user home=%s", u)
 	}
 
+	// Attach this thread to whichever desktop is currently receiving user
+	// input. Matters when the session is locked (Winlogon desktop) or at
+	// the login screen — DXGI duplication must run on the active desktop
+	// to capture it, otherwise we only see a black frame.
+	inputSwitchActiveDesktop()
+
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
 		log.Fatalf("helper: captureInit failed: %v", err)
