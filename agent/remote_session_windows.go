@@ -343,16 +343,31 @@ func runHelperMode(addr string) {
 	// The helper runs as the interactive user — C:\ProgramData is not writable
 	// by standard users, so setupLogging() falls back to stdout (discarded for
 	// a no-window process).  Redirect to %TEMP% so crash messages are visible.
+	// Dual logging: primary log in per-user TEMP (current behaviour) plus a
+	// shared log under C:\Windows\Temp keyed by session+PID so the admin
+	// can read it regardless of which user owns the helper.
+	var logFiles []*os.File
 	if tmpDir := os.TempDir(); tmpDir != "" {
 		if f, err := os.OpenFile(
 			filepath.Join(tmpDir, "oblireach-helper.log"),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
-			// Do NOT include os.Stdout — the helper runs as a no-window
-			// process; stdout may be a broken pipe that blocks writes.
-			log.SetOutput(f)
-			// Also use this file for encoder diagnostics (bypasses log pkg)
-			SetEncoderDiagFromLog(f)
+			logFiles = append(logFiles, f)
 		}
+	}
+	if f, err := os.OpenFile(
+		fmt.Sprintf(`C:\Windows\Temp\oblireach-helper-s%d-pid%d.log`,
+			currentSessionID(), os.Getpid()),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		logFiles = append(logFiles, f)
+	}
+	if len(logFiles) > 0 {
+		writers := make([]io.Writer, len(logFiles))
+		for i, f := range logFiles {
+			writers[i] = f
+		}
+		log.SetOutput(io.MultiWriter(writers...))
+		// Encoder diagnostic sink — use the first concrete file handle.
+		SetEncoderDiagFromLog(logFiles[0])
 	}
 	log.Printf("helper: connecting to service at %s", addr)
 

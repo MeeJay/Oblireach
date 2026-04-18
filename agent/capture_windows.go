@@ -315,6 +315,63 @@ static int capture_init_dxgi_only(int monitor_idx) {
 // one on which DXGI Desktop Duplication succeeds. Falls back to GDI on
 // monitor 0 if no DXGI output works at all (e.g. pure session-0 context).
 // Returns 0 on success, negative on failure.
+//
+// g_diag_init records the per-output attempt results so the Go caller can
+// surface the full picture to the log (adapter descriptions + HRESULTs).
+#define OR_MAX_DIAG 8
+typedef struct {
+    wchar_t adapter[64];
+    wchar_t device[32];
+    int     w, h;
+    int     step;       // where dxgi_init failed for this output (0 if ok)
+    unsigned int hr;    // HRESULT of the last failing step
+} DxgiDiagEntry;
+static DxgiDiagEntry g_diag[OR_MAX_DIAG];
+static int g_diag_count = 0;
+
+// dxgi_diag_dump populates g_diag with one entry per output, trying each
+// in isolation so we can see which adapter+output succeeded and why the
+// others failed. Called by capture_init_best.
+static void dxgi_diag_collect(void) {
+    g_diag_count = 0;
+    IDXGIFactory1 *factory = NULL;
+    if (FAILED(CreateDXGIFactory1(&IID_IDXGIFactory1, (void**)&factory))) return;
+    int idx = 0;
+    IDXGIAdapter *adp = NULL;
+    for (UINT ai = 0; IDXGIFactory1_EnumAdapters(factory, ai, &adp) == S_OK; ai++) {
+        DXGI_ADAPTER_DESC adesc;
+        IDXGIAdapter_GetDesc(adp, &adesc);
+        IDXGIOutput *out = NULL;
+        for (UINT oi = 0; IDXGIAdapter_EnumOutputs(adp, oi, &out) == S_OK; oi++) {
+            if (idx < OR_MAX_DIAG) {
+                DXGI_OUTPUT_DESC odesc;
+                IDXGIOutput_GetDesc(out, &odesc);
+                wcsncpy(g_diag[idx].adapter, adesc.Description, 63);
+                wcsncpy(g_diag[idx].device, odesc.DeviceName, 31);
+                g_diag[idx].w = odesc.DesktopCoordinates.right - odesc.DesktopCoordinates.left;
+                g_diag[idx].h = odesc.DesktopCoordinates.bottom - odesc.DesktopCoordinates.top;
+                g_diag[idx].step = 0;
+                g_diag[idx].hr = 0;
+                g_diag_count = idx + 1;
+                // Try dxgi_init(idx) to capture failure code for this output.
+                if (dxgi_init(idx) == 0) {
+                    dxgi_close();
+                } else {
+                    g_diag[idx].step = g_dxgi_last_fail;
+                    g_diag[idx].hr = g_dxgi_last_hr;
+                }
+            }
+            idx++;
+            IUnknown_Release(out);
+        }
+        IUnknown_Release(adp);
+    }
+    IUnknown_Release(factory);
+}
+
+static int diag_count(void) { return g_diag_count; }
+static DxgiDiagEntry *diag_entry(int i) { return &g_diag[i]; }
+
 static int capture_init_best(void) {
     MonitorInfoC mons[OR_MAX_MONITORS];
     int n = enumerate_monitors(mons, OR_MAX_MONITORS);
@@ -492,6 +549,24 @@ func captureMonitorOffset() (x, y int) {
 var captureActive bool
 
 func captureInit() error {
+	// Up-front diagnostic dump: try each DXGI output independently and log
+	// adapter + HRESULT for each. Makes it obvious which adapter succeeds
+	// and which Windows is refusing (E_ACCESSDENIED, UNSUPPORTED, etc.).
+	C.dxgi_diag_collect()
+	n := int(C.diag_count())
+	log.Printf("helper: DXGI dump — %d outputs visible to this process", n)
+	for i := 0; i < n; i++ {
+		e := C.diag_entry(C.int(i))
+		adapter := syscall.UTF16ToString((*[64]uint16)(unsafe.Pointer(&e.adapter[0]))[:])
+		device := syscall.UTF16ToString((*[32]uint16)(unsafe.Pointer(&e.device[0]))[:])
+		if e.step == 0 {
+			log.Printf("  [%d] %s / %s  %dx%d  DXGI ok", i, adapter, device, int(e.w), int(e.h))
+		} else {
+			log.Printf("  [%d] %s / %s  %dx%d  DXGI fail step=%d hr=0x%08x",
+				i, adapter, device, int(e.w), int(e.h), int(e.step), uint32(e.hr))
+		}
+	}
+
 	// Iterate every enumerated DXGI output and bind to the first one that
 	// supports desktop duplication. On Hyper-V basic VMs the primary output
 	// (Microsoft Basic Display / Hyper-V Video) does NOT support duplication
