@@ -94,26 +94,27 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *o
 // spawnInSession launches cmdLine inside the given Windows session.
 //
 // Token strategy (in order):
-//  1. Borrow winlogon.exe's token from the target session. winlogon runs as
-//     SYSTEM with high integrity AND is natively attached to the session's
-//     Winlogon desktop + Default desktop — the spawned helper inherits
-//     Secure Desktop access, so DXGI Desktop Duplication captures the
-//     UAC prompt and the login screen correctly (same technique as
-//     TeamViewer / RustDesk).
-//  2. If winlogon.exe isn't running in the target session (idle RDS with
-//     no RDP client yet, or a transient state), fall back to crafting a
-//     SYSTEM primary token from our own (service) token and forcing its
-//     session id via SetTokenInformation. Works for already-rendered
-//     desktops but does not grant Secure Desktop rights.
+//  1. WTSQueryUserToken — the logged-in user's primary token. Required for
+//     DXGI Desktop Duplication to see the session's outputs: DXGI is WinSta-
+//     scoped and a process running on the Winlogon WinSta (which is what
+//     the winlogon.exe token gives you) enumerates zero outputs for the
+//     user's session. Works for any Active/Disconnected user session.
+//  2. winlogon.exe's token — SYSTEM-level, attached to both Default and
+//     Winlogon desktops. Only used when no user is logged in (e.g. console
+//     at login screen). Grants Secure Desktop access for capturing the
+//     sign-in UI and UAC (when relevant).
+//  3. Crafted SYSTEM token with SetTokenSessionId. Last-resort fallback.
 //
 // outPID receives the PID of the spawned process on success.
-// outStrategy receives 1 if winlogon-token path was used, 2 for SetTokenSessionId
-// fallback. outDiag/outErr/outWlPid expose why strategy 1 was rejected (see
-// openSessionSystemToken). Returns 0 on success, negative GetLastError() on failure.
+// outStrategy receives: 0=WTSQueryUserToken, 1=winlogon token,
+// 2=SetTokenSessionId fallback. outDiag/outErr/outWlPid expose why winlogon
+// path was skipped when strategy=2. Returns 0 on success, negative
+// GetLastError() on failure.
 static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		DWORD *outStrategy, DWORD *outDiag, DWORD *outErr, DWORD *outWlPid) {
 	HANDLE hToken = NULL;
-	*outStrategy = 0;
+	*outStrategy = 255;
+	*outDiag = 0; *outErr = 0; *outWlPid = 0;
 
 	// Enable privileges on our own token before any token manipulation.
 	// LocalSystem holds these but they are not always enabled by default.
@@ -121,18 +122,34 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		HANDLE hSelf = NULL;
 		if (OpenProcessToken(GetCurrentProcess(),
 				TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hSelf)) {
-			enablePrivilege(hSelf, L"SeTcbPrivilege");
+			enablePrivilege(hSelf, L"SeTcbPrivilege");              // WTSQueryUserToken
 			enablePrivilege(hSelf, L"SeAssignPrimaryTokenPrivilege");
 			enablePrivilege(hSelf, L"SeIncreaseQuotaPrivilege");
-			enablePrivilege(hSelf, L"SeDebugPrivilege"); // needed to OpenProcess winlogon.exe
+			enablePrivilege(hSelf, L"SeDebugPrivilege");            // OpenProcess winlogon.exe
 			CloseHandle(hSelf);
 		}
 	}
 
-	// Strategy 1: borrow winlogon.exe's token from the target session.
-	hToken = openSessionSystemToken(sessionId, outDiag, outErr, outWlPid);
-	if (hToken) {
-		*outStrategy = 1;
+	// Strategy 0: WTSQueryUserToken — the user's primary token. Preferred
+	// whenever a user is logged in because DXGI outputs are only visible
+	// from the user's WinSta\Default.
+	{
+		HANDLE hUserToken = NULL;
+		if (WTSQueryUserToken(sessionId, &hUserToken)) {
+			// Duplicate as primary so we fully own the lifetime; also makes
+			// sure CreateProcessAsUserW works even if the source changes.
+			if (DuplicateTokenEx(hUserToken, TOKEN_ALL_ACCESS, NULL,
+					SecurityImpersonation, TokenPrimary, &hToken)) {
+				*outStrategy = 0;
+			}
+			CloseHandle(hUserToken);
+		}
+	}
+
+	// Strategy 1: borrow winlogon.exe's token (no user logged in / login screen).
+	if (!hToken) {
+		hToken = openSessionSystemToken(sessionId, outDiag, outErr, outWlPid);
+		if (hToken) *outStrategy = 1;
 	}
 
 	// Strategy 2: craft a SYSTEM token relocated to the target session.
@@ -239,13 +256,20 @@ func spawnInSessionGo(sessionID int, cmdLine string) (uint32, int) {
 }
 
 // logSpawnStrategy prints which token path the helper spawn used.
-//   strategy=1 → borrowed winlogon.exe's token (Secure Desktop capable)
-//   strategy=2 → SYSTEM + SetTokenSessionId fallback (no Secure Desktop access)
-// For the fallback case, diag explains why strategy 1 was skipped.
+//   0 → WTSQueryUserToken (logged-in user; required for DXGI to see the
+//       session's outputs — user's WinSta\Default).
+//   1 → winlogon.exe's token (no user in session; Secure Desktop access).
+//   2 → crafted SYSTEM + SetTokenSessionId fallback (last resort, no
+//       desktop or output visibility — rarely useful).
+// For strategy=1 (winlogon), diag explains any earlier failure of the
+// user-token path too if the code surfaces one.
 func logSpawnStrategy(sessionID int, strategy, diag, errCode, wlPid uint32) {
 	switch strategy {
+	case 0:
+		log.Printf("spawnInSession(%d): token strategy=user (WTSQueryUserToken)", sessionID)
 	case 1:
-		log.Printf("spawnInSession(%d): token strategy=winlogon (PID %d)", sessionID, wlPid)
+		log.Printf("spawnInSession(%d): token strategy=winlogon (PID %d — no user in session)",
+			sessionID, wlPid)
 	case 2:
 		reason := "unknown"
 		switch diag {
