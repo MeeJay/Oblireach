@@ -396,11 +396,13 @@ func runHelperMode(addr string) {
 		log.Printf("helper: running as user home=%s", u)
 	}
 
-	// Attach this thread to whichever desktop is currently receiving user
-	// input. Matters when the session is locked (Winlogon desktop) or at
-	// the login screen — DXGI duplication must run on the active desktop
-	// to capture it, otherwise we only see a black frame.
-	inputSwitchActiveDesktop()
+	// Keep the capture thread on winsta0\default. DXGI Desktop Duplication
+	// refuses to bind from the Winlogon WinSta (E_ACCESSDENIED — Secure
+	// Desktop protection), but it still captures the *visible* pixels of
+	// whichever desktop is on screen when the thread is on Default. The
+	// input path has its own per-call desktop switch (switch_to_active_desktop
+	// inside send_mouse_* / send_key) so SendInput still reaches the
+	// Winlogon desktop for lock-screen / UAC injection.
 
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
@@ -443,7 +445,6 @@ func runHelperMode(addr string) {
 	// Set monitor offset for input coordinate mapping
 	monOffX, monOffY := captureMonitorOffset()
 	setInputMonitorOffset(monOffX, monOffY)
-	defer inputUnblock()
 
 	// Init audio before sending init message so we can report availability
 	audioInit()
@@ -473,7 +474,33 @@ func runHelperMode(addr string) {
 	inputCh := make(chan []byte, 64)
 	codecCh := make(chan string, 4)
 	monitorCh := make(chan int, 4)
-	blockCh := make(chan bool, 4) // input block requests (must run on main thread)
+	blockCh := make(chan bool, 4)
+
+	// ── Input goroutine (separate OS thread) ───────────────────────────────
+	// SendInput and BlockInput need to run on a thread that can switch to
+	// the Winlogon/Default desktop as input routing requires. The capture
+	// thread stays pinned to winsta0\default so DXGI keeps working; this
+	// goroutine can move freely without breaking duplication.
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		defer inputUnblock()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case block := <-blockCh:
+				inputBlock(block)
+				confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
+				_ = pipeSend(conn, pipeTypeControl, confirm)
+			case payload, ok := <-inputCh:
+				if !ok {
+					return
+				}
+				dispatchInputJSON(payload, w, h)
+			}
+		}
+	}()
 
 	// ── Reader goroutine: input / stop from service ───────────────────────────
 	go func() {
@@ -557,19 +584,6 @@ func runHelperMode(addr string) {
 		select {
 		case <-stopCh:
 			return
-
-		case block := <-blockCh:
-			// BlockInput must run on the same OS thread as SendInput,
-			// otherwise SendInput is also blocked (Windows restriction).
-			inputBlock(block)
-			confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
-			_ = pipeSend(conn, pipeTypeControl, confirm)
-
-		case payload, ok := <-inputCh:
-			if !ok {
-				return
-			}
-			dispatchInputJSON(payload, w, h)
 
 		case newIdx := <-monitorCh:
 			log.Printf("helper: monitor switch to %d", newIdx)
