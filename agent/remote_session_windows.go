@@ -96,7 +96,12 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *o
 	HANDLE h = NULL;
 	DWORD pid = 0;
 
-	// dwm.exe first — its token holds the GPU access DXGI needs.
+	// LogonUI.exe is the process actively rendering the sign-in screen
+	// when no user is logged in; its token has real display access.
+	h = tryBorrowToken(dwSessionId, L"LogonUI.exe", &pid);
+	if (h) { *outPid = pid; return h; }
+
+	// dwm.exe composes the desktop on GPU; its token holds GPU rights.
 	h = tryBorrowToken(dwSessionId, L"dwm.exe", &pid);
 	if (h) { *outPid = pid; return h; }
 
