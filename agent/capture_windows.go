@@ -297,15 +297,48 @@ static int capture_init(void) {
     return capture_init_monitor(0);
 }
 
+// capture_init_dxgi_only: attempts DXGI desktop duplication on monitor_idx
+// without the GDI fallback. Used by capture_init_best to iterate monitors
+// and pick the first one that actually supports duplication — the Virtual
+// Display Driver does, while Hyper-V "basic" video and disconnected RDP
+// outputs do not.
+static int capture_init_dxgi_only(int monitor_idx) {
+    g_target_monitor = monitor_idx;
+    return dxgi_init(monitor_idx);
+}
+
+// capture_init_best: iterates every enumerated monitor and picks the first
+// one on which DXGI Desktop Duplication succeeds. Falls back to GDI on
+// monitor 0 if no DXGI output works at all (e.g. pure session-0 context).
+// Returns 0 on success, negative on failure.
+static int capture_init_best(void) {
+    MonitorInfoC mons[OR_MAX_MONITORS];
+    int n = enumerate_monitors(mons, OR_MAX_MONITORS);
+    for (int i = 0; i < n; i++) {
+        if (dxgi_init(i) == 0) {
+            g_target_monitor = i;
+            return 0;
+        }
+    }
+    // No DXGI output usable — last-resort GDI on the virtual screen.
+    return gdi_init(0, 0, 0, 0);
+}
+
 // capture_reinit_current: re-initialises capture on the currently tracked
 // monitor (g_target_monitor). Used by the recovery path after DXGI_ERROR_
 // ACCESS_LOST (UAC prompt / workstation lock / login screen transition).
 // Caller is expected to re-attach the thread to the active input desktop
 // first (via inputSwitchActiveDesktop on the Go side) so that DXGI can
-// duplicate whichever desktop is currently visible.
+// duplicate whichever desktop is currently visible. If the previously
+// chosen monitor no longer accepts duplication (the VDD disconnected,
+// topology changed), we iterate all outputs again via capture_init_best.
 static int capture_reinit_current(void) {
-    return capture_init_monitor(g_target_monitor);
+    int rc = capture_init_monitor(g_target_monitor);
+    if (rc == 0) return 0;
+    return capture_init_best();
 }
+
+static int capture_get_target_monitor(void) { return g_target_monitor; }
 
 static void capture_get_size(int *w, int *h) {
     *w = g_width;
@@ -455,18 +488,35 @@ func captureMonitorOffset() (x, y int) {
 var captureActive bool
 
 func captureInit() error {
-	ret := int(C.capture_init())
+	// Iterate every enumerated DXGI output and bind to the first one that
+	// supports desktop duplication. On Hyper-V basic VMs the primary output
+	// (Microsoft Basic Display / Hyper-V Video) does NOT support duplication
+	// and returns E_ACCESSDENIED, while the bundled Virtual Display Driver
+	// monitor does. Falling through the list surfaces whichever is usable.
+	ret := int(C.capture_init_best())
 	if ret < 0 {
 		return fmt.Errorf("screen capture init failed (code %d)", ret)
 	}
 	captureActive = true
+	mons := enumerateMonitors()
+	picked := -1
+	if ret == 0 {
+		picked = int(C.capture_get_target_monitor())
+	}
 	if C.capture_is_gdi() != 0 {
 		failStep := int(C.dxgi_last_fail())
 		hr := uint32(C.dxgi_last_hr())
-		log.Printf("helper: capture path = GDI (DXGI unavailable — step=%d hr=0x%08x)",
-			failStep, hr)
+		log.Printf("helper: capture path = GDI (no DXGI-capable output among %d — last step=%d hr=0x%08x)",
+			len(mons), failStep, hr)
 	} else {
-		log.Printf("helper: capture path = DXGI Desktop Duplication")
+		name := ""
+		if picked >= 0 && picked < len(mons) {
+			name = fmt.Sprintf(" [%s %dx%d@%d,%d]",
+				mons[picked].Name, mons[picked].Width, mons[picked].Height,
+				mons[picked].X, mons[picked].Y)
+		}
+		log.Printf("helper: capture path = DXGI Desktop Duplication (monitor %d of %d)%s",
+			picked, len(mons), name)
 	}
 	return nil
 }

@@ -190,6 +190,14 @@ func main() {
 	// Write version file so the Obliance tray can read it.
 	_ = os.WriteFile(filepath.Join(configDir, "version.txt"), []byte(agentVersion), 0644)
 
+	// Ensure the Virtual Display Driver is present so headless / pre-login /
+	// RDP-disconnected sessions have a DXGI-capturable output. Failure is
+	// non-fatal — the agent still works for sessions that have a real
+	// rendered display.
+	if err := vddEnsureInstalled(configDir); err != nil {
+		log.Printf("vdd: setup failed: %v", err)
+	}
+
 	runFn := func() { runCmdWS(cfg) }
 
 	// Try to run as a Windows service first; fall back to interactive mode.
