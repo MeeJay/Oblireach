@@ -7,6 +7,7 @@ package main
 #include <windows.h>
 #include <wtsapi32.h>
 #include <userenv.h>
+#include <tlhelp32.h>
 #include <stdlib.h>
 #include <wchar.h>
 
@@ -22,17 +23,84 @@ static BOOL enablePrivilege(HANDLE hToken, LPCWSTR privName) {
 	return AdjustTokenPrivileges(hToken, FALSE, &tp, 0, NULL, NULL);
 }
 
+// findProcPidInSession scans running processes for exeName (case-insensitive)
+// running in the given WTS session and returns its PID (0 if not found).
+// Used to locate winlogon.exe (SYSTEM, session-attached, Secure Desktop rights)
+// in the target session so we can borrow its token — the same technique
+// used by TeamViewer / RustDesk to capture UAC Secure Desktop and login
+// screens from a service running in session 0.
+static DWORD findProcPidInSession(DWORD dwSessionId, LPCWSTR exeName) {
+	DWORD found = 0;
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnap == INVALID_HANDLE_VALUE) return 0;
+	PROCESSENTRY32W pe;
+	pe.dwSize = sizeof(pe);
+	if (Process32FirstW(hSnap, &pe)) {
+		do {
+			if (_wcsicmp(pe.szExeFile, exeName) != 0) continue;
+			DWORD sid = 0;
+			if (ProcessIdToSessionId(pe.th32ProcessID, &sid) && sid == dwSessionId) {
+				found = pe.th32ProcessID;
+				break;
+			}
+		} while (Process32NextW(hSnap, &pe));
+	}
+	CloseHandle(hSnap);
+	return found;
+}
+
+// openSessionSystemToken returns a primary SYSTEM token for dwSessionId by
+// borrowing winlogon.exe's token in that session. The returned token is
+// already attached to the session's desktops (Default + Winlogon), so a
+// process spawned with it can switch to the Secure Desktop to capture UAC
+// prompts and the login screen.
+//
+// Returns NULL if winlogon.exe is not running in dwSessionId (e.g. a purely
+// idle RDS listener with no RDP client connected) — the caller should then
+// fall back to the crafted SYSTEM+SetTokenSessionId path.
+static HANDLE openSessionSystemToken(DWORD dwSessionId) {
+	DWORD pid = findProcPidInSession(dwSessionId, L"winlogon.exe");
+	if (pid == 0) return NULL;
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+	if (!hProc) return NULL;
+	HANDLE hSrc = NULL;
+	if (!OpenProcessToken(hProc, TOKEN_DUPLICATE | TOKEN_QUERY, &hSrc)) {
+		CloseHandle(hProc);
+		return NULL;
+	}
+	CloseHandle(hProc);
+	HANDLE hPrimary = NULL;
+	if (!DuplicateTokenEx(hSrc, TOKEN_ALL_ACCESS, NULL,
+			SecurityImpersonation, TokenPrimary, &hPrimary)) {
+		CloseHandle(hSrc);
+		return NULL;
+	}
+	CloseHandle(hSrc);
+	return hPrimary;
+}
+
 // spawnInSession launches cmdLine inside the given Windows session.
-// Uses WTSQueryUserToken for logged-in sessions; falls back to a
-// SYSTEM token with the session ID forced when no user is logged in.
+//
+// Token strategy (in order):
+//  1. Borrow winlogon.exe's token from the target session. winlogon runs as
+//     SYSTEM with high integrity AND is natively attached to the session's
+//     Winlogon desktop + Default desktop — the spawned helper inherits
+//     Secure Desktop access, so DXGI Desktop Duplication captures the
+//     UAC prompt and the login screen correctly (same technique as
+//     TeamViewer / RustDesk).
+//  2. If winlogon.exe isn't running in the target session (idle RDS with
+//     no RDP client yet, or a transient state), fall back to crafting a
+//     SYSTEM primary token from our own (service) token and forcing its
+//     session id via SetTokenInformation. Works for already-rendered
+//     desktops but does not grant Secure Desktop rights.
+//
 // outPID receives the PID of the spawned process on success.
 // Returns 0 on success, negative GetLastError() on failure.
 static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 	HANDLE hToken = NULL;
 
-	// Enable SeTcbPrivilege on our own token before calling WTSQueryUserToken.
-	// Even though LocalSystem holds this privilege, it may not be enabled in
-	// the active token — AdjustTokenPrivileges is required to activate it.
+	// Enable privileges on our own token before any token manipulation.
+	// LocalSystem holds these but they are not always enabled by default.
 	{
 		HANDLE hSelf = NULL;
 		if (OpenProcessToken(GetCurrentProcess(),
@@ -40,14 +108,16 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 			enablePrivilege(hSelf, L"SeTcbPrivilege");
 			enablePrivilege(hSelf, L"SeAssignPrimaryTokenPrivilege");
 			enablePrivilege(hSelf, L"SeIncreaseQuotaPrivilege");
+			enablePrivilege(hSelf, L"SeDebugPrivilege"); // needed to OpenProcess winlogon.exe
 			CloseHandle(hSelf);
 		}
 	}
 
-	// Always use SYSTEM token (LocalSystem from our service process) and
-	// relocate it to the target session. This ensures the helper runs with
-	// high integrity, bypassing UIPI so SendInput works on admin windows.
-	{
+	// Strategy 1: borrow winlogon.exe's token from the target session.
+	hToken = openSessionSystemToken(sessionId);
+
+	// Strategy 2: craft a SYSTEM token relocated to the target session.
+	if (!hToken) {
 		HANDLE hSysToken = NULL;
 		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hSysToken)) {
 			return -(int)GetLastError();
