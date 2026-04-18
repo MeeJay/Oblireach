@@ -6,6 +6,7 @@ package main
 #cgo LDFLAGS: -luser32
 
 #include <windows.h>
+#include <stdio.h>
 
 // Forward declaration
 static void switch_to_active_desktop(void);
@@ -111,6 +112,53 @@ static void switch_to_active_desktop(void) {
 static void force_switch_active_desktop(void) {
     g_deskCheckTime = 0;
     switch_to_active_desktop();
+}
+
+// attach_to_default_desktop forces the calling process to winsta0 and the
+// current thread to the Default desktop. Required for the helper's capture
+// thread when spawned with a token (e.g. winlogon.exe) whose primary
+// WindowStation is not winsta0 — DXGI Desktop Duplication returns
+// E_ACCESSDENIED from the Winlogon WinSta, but succeeds on WinSta0\Default
+// even when no user is logged in. Fills outName with "WinSta\Desktop" for
+// diagnostic logging.
+static void attach_to_default_desktop(char *outName, int outLen) {
+    char wsname[128] = {0};
+    char deskname[128] = {0};
+
+    HWINSTA hWinsta = OpenWindowStationW(L"winsta0", FALSE,
+        WINSTA_ENUMDESKTOPS | WINSTA_READATTRIBUTES | WINSTA_ACCESSCLIPBOARD |
+        WINSTA_CREATEDESKTOP | WINSTA_WRITEATTRIBUTES | WINSTA_ACCESSGLOBALATOMS |
+        WINSTA_EXITWINDOWS | WINSTA_ENUMERATE | WINSTA_READSCREEN);
+    if (!hWinsta) {
+        hWinsta = OpenWindowStationW(L"winsta0", FALSE, WINSTA_READATTRIBUTES);
+    }
+    if (hWinsta) {
+        SetProcessWindowStation(hWinsta);
+        DWORD size = 0;
+        GetUserObjectInformationA(hWinsta, UOI_NAME, wsname, sizeof(wsname), &size);
+    }
+
+    HDESK hDesk = OpenDesktopW(L"Default", 0, FALSE,
+        DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
+        DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU | DESKTOP_HOOKCONTROL |
+        DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK | DESKTOP_ENUMERATE);
+    if (!hDesk) {
+        hDesk = OpenDesktopW(L"Default", 0, FALSE, GENERIC_READ | GENERIC_WRITE);
+    }
+    if (hDesk) {
+        SetThreadDesktop(hDesk);
+        if (g_currentDesk) CloseDesktop(g_currentDesk);
+        g_currentDesk = hDesk;
+        DWORD size = 0;
+        GetUserObjectInformationA(hDesk, UOI_NAME, deskname, sizeof(deskname), &size);
+    }
+
+    if (outName && outLen > 1) {
+        snprintf(outName, outLen, "%s\\%s",
+            wsname[0] ? wsname : "?",
+            deskname[0] ? deskname : "?");
+        outName[outLen-1] = 0;
+    }
 }
 
 // get_virtual_screen_size: returns the full virtual desktop dimensions.
@@ -306,4 +354,16 @@ func inputUnblock() {
 // the capture layer before re-initialising DXGI after DXGI_ERROR_ACCESS_LOST.
 func inputSwitchActiveDesktop() {
 	C.force_switch_active_desktop()
+}
+
+// inputAttachToDefaultDesktop pins the current process to WinSta0 and the
+// current OS thread to the Default desktop. Returns "WinSta\Desktop" for
+// the logger. Used by the helper's capture thread at startup: DXGI Desktop
+// Duplication returns E_ACCESSDENIED from the Winlogon WinSta (which is
+// where the helper lands when spawned with winlogon.exe's token) but works
+// from WinSta0\Default — even on a session with no user logged in.
+func inputAttachToDefaultDesktop() string {
+	var buf [320]C.char
+	C.attach_to_default_desktop(&buf[0], C.int(len(buf)))
+	return C.GoString(&buf[0])
 }

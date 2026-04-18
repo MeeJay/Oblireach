@@ -396,13 +396,14 @@ func runHelperMode(addr string) {
 		log.Printf("helper: running as user home=%s", u)
 	}
 
-	// Keep the capture thread on winsta0\default. DXGI Desktop Duplication
-	// refuses to bind from the Winlogon WinSta (E_ACCESSDENIED — Secure
-	// Desktop protection), but it still captures the *visible* pixels of
-	// whichever desktop is on screen when the thread is on Default. The
-	// input path has its own per-call desktop switch (switch_to_active_desktop
-	// inside send_mouse_* / send_key) so SendInput still reaches the
-	// Winlogon desktop for lock-screen / UAC injection.
+	// Explicitly pin this process to WinSta0 and this (capture) thread to
+	// the Default desktop. When the helper is spawned with winlogon.exe's
+	// token, lpDesktop="winsta0\\default" in the STARTUPINFO is advisory —
+	// the process can still end up anchored to the Winlogon WinSta via
+	// token affinity, where DXGI Desktop Duplication refuses with
+	// E_ACCESSDENIED. Moving explicitly to WinSta0\Default makes
+	// IDXGIOutput1::DuplicateOutput succeed even in no-user sessions.
+	log.Printf("helper: attached to %s", inputAttachToDefaultDesktop())
 
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {

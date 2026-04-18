@@ -129,6 +129,7 @@ func inputBlock(block bool) {}            // Not available on Linux
 func inputUnblock()         {}
 
 func inputSwitchActiveDesktop() {} // Windows-only concept
+func inputAttachToDefaultDesktop() string { return "" }
 
 // vkToKeysym maps Windows VK codes to X11 keysyms for common keys.
 func vkToKeysym(vk int) uint {

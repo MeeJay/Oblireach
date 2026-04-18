@@ -109,6 +109,7 @@ func inputBlock(block bool) {}
 func inputUnblock()         {}
 
 func inputSwitchActiveDesktop() {} // Windows-only concept
+func inputAttachToDefaultDesktop() string { return "" }
 
 // vkToMacKeycode maps Windows VK codes to macOS key codes.
 func vkToMacKeycode(vk int) int {
