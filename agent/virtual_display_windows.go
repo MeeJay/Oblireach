@@ -63,11 +63,22 @@ func vddEnsureInstalled(configDir string) error {
 		// Fallback for dev builds where the assets live in the source tree.
 		bundleDir = filepath.Join(exeDir, "driver-assets", "vdd")
 	}
-	for _, name := range []string{"MttVDD.inf", "MttVDD.dll", "mttvdd.cat"} {
+	for _, name := range []string{"MttVDD.inf", "MttVDD.dll", "mttvdd.cat", "signpath-publisher.cer"} {
 		src := filepath.Join(bundleDir, name)
 		if _, err := os.Stat(src); err != nil {
 			return fmt.Errorf("vdd: bundled file missing: %s (ship it next to the agent exe)", src)
 		}
+	}
+
+	// Windows requires the driver's signing publisher to be in the machine's
+	// Trusted Publishers store before pnputil will silently install, even
+	// when the Authenticode chain itself is valid. pnputil otherwise bails
+	// with 0xE0000242 = SPAPI_E_AUTHENTICODE_PUBLISHER_NOT_TRUSTED.
+	// The VDD is signed by SignPath Foundation; we pre-trust its public
+	// certificate so the install is fully unattended.
+	certPath := filepath.Join(bundleDir, "signpath-publisher.cer")
+	if err := vddTrustPublisher(certPath); err != nil {
+		log.Printf("vdd: trust publisher: %v (continuing — install may still fail)", err)
 	}
 
 	// Write the settings XML to the path the driver reads at startup.
@@ -126,6 +137,23 @@ func vddExeDir() (string, error) {
 		return "", err
 	}
 	return filepath.Dir(exe), nil
+}
+
+// vddTrustPublisher adds cert (a .cer file) to the LocalMachine Trusted
+// Publishers store. Required for unattended driver installation — without
+// this pnputil refuses with SPAPI_E_AUTHENTICODE_PUBLISHER_NOT_TRUSTED
+// (0xE0000242) even though the signature chain is cryptographically valid.
+// Idempotent: certutil returns success if the cert is already in the store.
+func vddTrustPublisher(cerPath string) error {
+	cmd := exec.Command("certutil.exe", "-addstore", "-f", "TrustedPublisher", cerPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(out))
+	if err != nil {
+		return fmt.Errorf("certutil: %w (output: %s)", err, trimmed)
+	}
+	log.Printf("vdd: added publisher to TrustedPublisher store (certutil: %s)", trimmed)
+	return nil
 }
 
 func copyFileIfDifferent(src, dst string) error {
