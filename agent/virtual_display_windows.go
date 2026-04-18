@@ -91,37 +91,49 @@ func vddEnsureInstalled(configDir string) error {
 		log.Printf("vdd: copy settings.xml: %v (continuing)", err)
 	}
 
-	// Fast-path: if the driver is already known to the driver store, skip
-	// pnputil. Checking via `pnputil /enum-drivers` is slow (~1s); we keep
-	// a marker file after a successful install instead.
+	// Fast-path: if the driver is already known AND the device node exists,
+	// skip the install dance. We verify the device actually exists (not just
+	// the driver store entry) because earlier builds could end up with a
+	// package installed but no device instantiated.
 	marker := filepath.Join(vddDir, vddInstallMarker)
 	if _, err := os.Stat(marker); err == nil {
-		log.Printf("vdd: already installed (marker present)")
-		return nil
+		if vddDevicePresent() {
+			log.Printf("vdd: already installed (marker + device present)")
+			return nil
+		}
+		log.Printf("vdd: marker present but device missing — re-running install")
+		_ = os.Remove(marker)
 	}
 
 	infPath := filepath.Join(bundleDir, "MttVDD.inf")
-	log.Printf("vdd: installing driver from %s", infPath)
-	cmd := exec.Command("pnputil.exe", "/add-driver", infPath, "/install")
+	log.Printf("vdd: adding driver package to driver store from %s", infPath)
+	cmd := exec.Command("pnputil.exe", "/add-driver", infPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.CombinedOutput()
 	log.Printf("vdd: pnputil output:\n%s", strings.TrimSpace(string(out)))
 	if err != nil {
-		// Exit code 259 = ERROR_NO_MORE_ITEMS = driver already present.
-		// Exit code 3010 = reboot required — treated as success for our
-		// purposes (driver IS in the store, it just wants a restart).
+		// 259 = ERROR_NO_MORE_ITEMS (package identical to one already in store)
+		// 3010 = ERROR_SUCCESS_REBOOT_REQUIRED — both benign.
 		if ee, ok := err.(*exec.ExitError); ok {
 			code := ee.ExitCode()
-			if code == 259 || code == 3010 {
-				log.Printf("vdd: pnputil exit=%d (treating as success)", code)
-				_ = os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0644)
-				return nil
+			if code != 259 && code != 3010 {
+				return fmt.Errorf("vdd: pnputil failed: %w", err)
 			}
+			log.Printf("vdd: pnputil exit=%d (treating as success)", code)
+		} else {
+			return fmt.Errorf("vdd: pnputil failed: %w", err)
 		}
-		return fmt.Errorf("vdd: pnputil failed: %w", err)
+	}
+
+	// pnputil /add-driver only places the package in the driver store.
+	// For Root-enumerated software devices (Root\MttVDD), no PnP event
+	// ever fires to create an actual device instance — we must register
+	// one ourselves via SetupAPI, then point it at the INF.
+	if err := vddEnsureDevicePresent(infPath); err != nil {
+		return fmt.Errorf("vdd: device instantiation: %w", err)
 	}
 	_ = os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0644)
-	log.Printf("vdd: driver installed successfully")
+	log.Printf("vdd: driver installed and device instantiated successfully")
 	return nil
 }
 
