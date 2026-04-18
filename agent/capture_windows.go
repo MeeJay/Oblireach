@@ -149,49 +149,32 @@ static unsigned int dxgi_last_hr(void) { return g_dxgi_last_hr; }
 
 // Returns 0 on success, negative on any failure (resources cleaned up).
 // monitor_idx: which output to capture (0 = primary, enumerate order).
+//
+// IMPORTANT: DXGI requires the D3D11 device to be created on the SAME
+// adapter that owns the target output. Using a device from a different
+// adapter makes DuplicateOutput return E_INVALIDARG (0x80070057). That
+// matters for systems with multiple adapters — e.g. a Hyper-V VM where
+// the primary is "Microsoft Hyper-V Video" and the Virtual Display
+// Driver is a separate IDD adapter: we must enumerate first, find the
+// adapter that owns monitor_idx, then create D3D11 on it.
 static int dxgi_init(int monitor_idx) {
-    D3D_FEATURE_LEVEL fl;
-    HRESULT hr = D3D11CreateDevice(
-        NULL, D3D_DRIVER_TYPE_HARDWARE, NULL,
-        0, NULL, 0, D3D11_SDK_VERSION,
-        &g_device, &fl, &g_ctx
-    );
-    if (FAILED(hr)) {
-        hr = D3D11CreateDevice(
-            NULL, D3D_DRIVER_TYPE_WARP, NULL,
-            0, NULL, 0, D3D11_SDK_VERSION,
-            &g_device, &fl, &g_ctx
-        );
-        if (FAILED(hr)) { g_dxgi_last_fail = -1; return -1; }
-    }
-
-    // Find the target output by walking all adapters/outputs
-    IDXGIDevice *dxgiDev = NULL;
-    hr = ID3D11Device_QueryInterface(g_device, &IID_IDXGIDevice, (void**)&dxgiDev);
-    if (FAILED(hr)) { dxgi_close(); return -2; }
-
-    IDXGIAdapter *adapter = NULL;
-    hr = IDXGIDevice_GetAdapter(dxgiDev, &adapter);
-    IUnknown_Release(dxgiDev);
-    if (FAILED(hr)) { dxgi_close(); return -3; }
-
-    // Walk outputs to find monitor_idx
-    IDXGIOutput *output = NULL;
     IDXGIFactory1 *factory = NULL;
-    IDXGIAdapter_GetParent(adapter, &IID_IDXGIFactory1, (void**)&factory);
-    IUnknown_Release(adapter);
-    if (!factory) { dxgi_close(); return -3; }
+    HRESULT hr = CreateDXGIFactory1(&IID_IDXGIFactory1, (void**)&factory);
+    if (FAILED(hr)) { g_dxgi_last_fail = -1; return -1; }
 
+    // First pass: locate the adapter that owns monitor_idx.
+    IDXGIAdapter *targetAdapter = NULL;
+    IDXGIOutput *targetOutput = NULL;
     int cur = 0;
-    int found = 0;
     UINT ai, oi;
     IDXGIAdapter *adp = NULL;
-    for (ai = 0; !found && IDXGIFactory1_EnumAdapters(factory, ai, &adp) == S_OK; ai++) {
+    for (ai = 0; !targetOutput && IDXGIFactory1_EnumAdapters(factory, ai, &adp) == S_OK; ai++) {
         IDXGIOutput *out = NULL;
         for (oi = 0; IDXGIAdapter_EnumOutputs(adp, oi, &out) == S_OK; oi++) {
             if (cur == monitor_idx) {
-                output = out;
-                found = 1;
+                targetOutput = out;              // keep ref, released later
+                targetAdapter = adp;             // keep ref (will be released after device creation)
+                IDXGIAdapter_AddRef(targetAdapter);
                 break;
             }
             cur++;
@@ -201,18 +184,39 @@ static int dxgi_init(int monitor_idx) {
     }
     IUnknown_Release(factory);
 
-    if (!output) { g_dxgi_last_fail = -4; dxgi_close(); return -4; }
+    if (!targetOutput || !targetAdapter) {
+        g_dxgi_last_fail = -4;
+        if (targetOutput) IUnknown_Release(targetOutput);
+        if (targetAdapter) IUnknown_Release(targetAdapter);
+        return -4;
+    }
+
+    // Create D3D11 device on the adapter that owns this output. With an
+    // explicit adapter the driver type MUST be D3D_DRIVER_TYPE_UNKNOWN.
+    D3D_FEATURE_LEVEL fl;
+    hr = D3D11CreateDevice(
+        (IDXGIAdapter*)targetAdapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
+        0, NULL, 0, D3D11_SDK_VERSION,
+        &g_device, &fl, &g_ctx
+    );
+    IUnknown_Release(targetAdapter);
+    if (FAILED(hr)) {
+        IUnknown_Release(targetOutput);
+        g_dxgi_last_fail = -1;
+        g_dxgi_last_hr = (unsigned int)hr;
+        return -1;
+    }
 
     DXGI_OUTPUT_DESC desc;
-    IDXGIOutput_GetDesc(output, &desc);
+    IDXGIOutput_GetDesc(targetOutput, &desc);
     g_width  = desc.DesktopCoordinates.right  - desc.DesktopCoordinates.left;
     g_height = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
     g_mon_x  = desc.DesktopCoordinates.left;
     g_mon_y  = desc.DesktopCoordinates.top;
 
     IDXGIOutput1 *output1 = NULL;
-    hr = IDXGIOutput_QueryInterface(output, &IID_IDXGIOutput1, (void**)&output1);
-    IUnknown_Release(output);
+    hr = IDXGIOutput_QueryInterface(targetOutput, &IID_IDXGIOutput1, (void**)&output1);
+    IUnknown_Release(targetOutput);
     if (FAILED(hr)) { g_dxgi_last_fail = -5; dxgi_close(); return -5; }
 
     hr = IDXGIOutput1_DuplicateOutput(output1, (IUnknown*)g_device, &g_dup);
@@ -220,8 +224,8 @@ static int dxgi_init(int monitor_idx) {
     if (FAILED(hr)) {
         // HRESULT encodes the reason: E_ACCESSDENIED = no rights (secure
         // desktop / cross-session), DXGI_ERROR_UNSUPPORTED = adapter does
-        // not implement desktop duplication (common for Hyper-V basic
-        // display adapter — needs GPU-paravirt or an IDD).
+        // not implement desktop duplication, E_INVALIDARG = device/output
+        // adapter mismatch (should no longer happen after the fix above).
         g_dxgi_last_fail = -6;
         g_dxgi_last_hr = (unsigned int)hr;
         dxgi_close(); g_width = 0; g_height = 0; return -6;
