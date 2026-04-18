@@ -49,33 +49,16 @@ static DWORD findProcPidInSession(DWORD dwSessionId, LPCWSTR exeName) {
 	return found;
 }
 
-// openSessionSystemToken returns a primary SYSTEM token for dwSessionId by
-// borrowing winlogon.exe's token in that session. The returned token is
-// already attached to the session's desktops (Default + Winlogon), so a
-// process spawned with it can switch to the Secure Desktop to capture UAC
-// prompts and the login screen.
-//
-// Returns NULL if winlogon.exe is not running in dwSessionId (e.g. a purely
-// idle RDS listener with no RDP client connected) — the caller should then
-// fall back to the crafted SYSTEM+SetTokenSessionId path.
-//
-// outDiag receives a diagnostic code:
-//   0 = success (winlogon token duplicated)
-//   1 = winlogon.exe PID not found in session
-//   2 = OpenProcess failed (GetLastError stored in outErr)
-//   3 = OpenProcessToken failed (GetLastError stored in outErr)
-//   4 = DuplicateTokenEx failed (GetLastError stored in outErr)
-// outPid receives the winlogon PID (0 if not found).
-static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *outErr, DWORD *outPid) {
-	*outDiag = 0; *outErr = 0; *outPid = 0;
-	DWORD pid = findProcPidInSession(dwSessionId, L"winlogon.exe");
-	*outPid = pid;
-	if (pid == 0) { *outDiag = 1; return NULL; }
+// tryBorrowToken tries to open + duplicate the primary token of the
+// process named exeName in dwSessionId. Returns NULL on any failure.
+static HANDLE tryBorrowToken(DWORD dwSessionId, LPCWSTR exeName, DWORD *outPid) {
+	DWORD pid = findProcPidInSession(dwSessionId, exeName);
+	if (outPid) *outPid = pid;
+	if (pid == 0) return NULL;
 	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-	if (!hProc) { *outDiag = 2; *outErr = GetLastError(); return NULL; }
+	if (!hProc) return NULL;
 	HANDLE hSrc = NULL;
 	if (!OpenProcessToken(hProc, TOKEN_DUPLICATE | TOKEN_QUERY, &hSrc)) {
-		*outDiag = 3; *outErr = GetLastError();
 		CloseHandle(hProc);
 		return NULL;
 	}
@@ -83,12 +66,49 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *o
 	HANDLE hPrimary = NULL;
 	if (!DuplicateTokenEx(hSrc, TOKEN_ALL_ACCESS, NULL,
 			SecurityImpersonation, TokenPrimary, &hPrimary)) {
-		*outDiag = 4; *outErr = GetLastError();
 		CloseHandle(hSrc);
 		return NULL;
 	}
 	CloseHandle(hSrc);
 	return hPrimary;
+}
+
+// openSessionSystemToken returns a primary SYSTEM token for dwSessionId by
+// borrowing one from an already-running SYSTEM process in that session.
+// Tries in order:
+//   1. dwm.exe  — Desktop Window Manager, actively composes to the GPU, so
+//                 its token has real graphics-adapter access (vs. WARP).
+//                 winlogon.exe's token is explicitly filtered away from GPU
+//                 access by Windows as an anti-keylogger measure, which is
+//                 why DXGI Desktop Duplication returns E_ACCESSDENIED with
+//                 it and only enumerates "Microsoft Basic Render Driver".
+//   2. csrss.exe — Client/Server Runtime Subsystem. SYSTEM, session-attached,
+//                  historically allowed GPU access for the console subsystem.
+//   3. winlogon.exe — last resort for extreme lockout (no DWM, no CSRSS? —
+//                     unusual but possible during transient states).
+//
+// outDiag / outErr / outPid are kept for compatibility with the existing
+// Go logger wiring.
+//   0 = success, 2 = all processes tried failed to yield a token.
+static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *outErr, DWORD *outPid) {
+	*outDiag = 0; *outErr = 0; *outPid = 0;
+
+	HANDLE h = NULL;
+	DWORD pid = 0;
+
+	// dwm.exe first — its token holds the GPU access DXGI needs.
+	h = tryBorrowToken(dwSessionId, L"dwm.exe", &pid);
+	if (h) { *outPid = pid; return h; }
+
+	h = tryBorrowToken(dwSessionId, L"csrss.exe", &pid);
+	if (h) { *outPid = pid; return h; }
+
+	h = tryBorrowToken(dwSessionId, L"winlogon.exe", &pid);
+	if (h) { *outPid = pid; return h; }
+
+	*outDiag = 1; // nothing found / usable
+	*outErr = GetLastError();
+	return NULL;
 }
 
 // spawnInSession launches cmdLine inside the given Windows session.
@@ -146,7 +166,12 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		}
 	}
 
-	// Strategy 1: borrow winlogon.exe's token (no user logged in / login screen).
+	// Strategy 1: borrow a SYSTEM-context process token from the target
+	// session (dwm.exe / csrss.exe / winlogon.exe, in that order).
+	// winlogon's token is intentionally denied real GPU access by Windows
+	// — DXGI returns only "Microsoft Basic Render Driver" (WARP) and
+	// E_ACCESSDENIED on DuplicateOutput. DWM's token holds the GPU access
+	// and gives us real adapters.
 	if (!hToken) {
 		hToken = openSessionSystemToken(sessionId, outDiag, outErr, outWlPid);
 		if (hToken) *outStrategy = 1;
@@ -268,7 +293,7 @@ func logSpawnStrategy(sessionID int, strategy, diag, errCode, wlPid uint32) {
 	case 0:
 		log.Printf("spawnInSession(%d): token strategy=user (WTSQueryUserToken)", sessionID)
 	case 1:
-		log.Printf("spawnInSession(%d): token strategy=winlogon (PID %d — no user in session)",
+		log.Printf("spawnInSession(%d): token strategy=system-process (PID %d — no user in session)",
 			sessionID, wlPid)
 	case 2:
 		reason := "unknown"
