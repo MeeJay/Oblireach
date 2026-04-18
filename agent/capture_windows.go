@@ -140,6 +140,13 @@ static void dxgi_close(void) {
     if (g_device)  { IUnknown_Release(g_device);  g_device  = NULL; }
 }
 
+// g_dxgi_last_fail: exit code of the most recent dxgi_init failure, for diag.
+// g_dxgi_last_hr: raw HRESULT from DuplicateOutput when it was the failing step.
+static int g_dxgi_last_fail = 0;
+static unsigned int g_dxgi_last_hr = 0;
+static int dxgi_last_fail(void) { return g_dxgi_last_fail; }
+static unsigned int dxgi_last_hr(void) { return g_dxgi_last_hr; }
+
 // Returns 0 on success, negative on any failure (resources cleaned up).
 // monitor_idx: which output to capture (0 = primary, enumerate order).
 static int dxgi_init(int monitor_idx) {
@@ -155,7 +162,7 @@ static int dxgi_init(int monitor_idx) {
             0, NULL, 0, D3D11_SDK_VERSION,
             &g_device, &fl, &g_ctx
         );
-        if (FAILED(hr)) return -1;
+        if (FAILED(hr)) { g_dxgi_last_fail = -1; return -1; }
     }
 
     // Find the target output by walking all adapters/outputs
@@ -194,7 +201,7 @@ static int dxgi_init(int monitor_idx) {
     }
     IUnknown_Release(factory);
 
-    if (!output) { dxgi_close(); return -4; }
+    if (!output) { g_dxgi_last_fail = -4; dxgi_close(); return -4; }
 
     DXGI_OUTPUT_DESC desc;
     IDXGIOutput_GetDesc(output, &desc);
@@ -206,11 +213,19 @@ static int dxgi_init(int monitor_idx) {
     IDXGIOutput1 *output1 = NULL;
     hr = IDXGIOutput_QueryInterface(output, &IID_IDXGIOutput1, (void**)&output1);
     IUnknown_Release(output);
-    if (FAILED(hr)) { dxgi_close(); return -5; }
+    if (FAILED(hr)) { g_dxgi_last_fail = -5; dxgi_close(); return -5; }
 
     hr = IDXGIOutput1_DuplicateOutput(output1, (IUnknown*)g_device, &g_dup);
     IUnknown_Release(output1);
-    if (FAILED(hr)) { dxgi_close(); g_width = 0; g_height = 0; return -6; }
+    if (FAILED(hr)) {
+        // HRESULT encodes the reason: E_ACCESSDENIED = no rights (secure
+        // desktop / cross-session), DXGI_ERROR_UNSUPPORTED = adapter does
+        // not implement desktop duplication (common for Hyper-V basic
+        // display adapter — needs GPU-paravirt or an IDD).
+        g_dxgi_last_fail = -6;
+        g_dxgi_last_hr = (unsigned int)hr;
+        dxgi_close(); g_width = 0; g_height = 0; return -6;
+    }
 
     return 0;
 }
@@ -446,7 +461,10 @@ func captureInit() error {
 	}
 	captureActive = true
 	if C.capture_is_gdi() != 0 {
-		log.Printf("helper: capture path = GDI (DXGI unavailable in this session)")
+		failStep := int(C.dxgi_last_fail())
+		hr := uint32(C.dxgi_last_hr())
+		log.Printf("helper: capture path = GDI (DXGI unavailable — step=%d hr=0x%08x)",
+			failStep, hr)
 	} else {
 		log.Printf("helper: capture path = DXGI Desktop Duplication")
 	}

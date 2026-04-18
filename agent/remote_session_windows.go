@@ -58,13 +58,24 @@ static DWORD findProcPidInSession(DWORD dwSessionId, LPCWSTR exeName) {
 // Returns NULL if winlogon.exe is not running in dwSessionId (e.g. a purely
 // idle RDS listener with no RDP client connected) — the caller should then
 // fall back to the crafted SYSTEM+SetTokenSessionId path.
-static HANDLE openSessionSystemToken(DWORD dwSessionId) {
+//
+// outDiag receives a diagnostic code:
+//   0 = success (winlogon token duplicated)
+//   1 = winlogon.exe PID not found in session
+//   2 = OpenProcess failed (GetLastError stored in outErr)
+//   3 = OpenProcessToken failed (GetLastError stored in outErr)
+//   4 = DuplicateTokenEx failed (GetLastError stored in outErr)
+// outPid receives the winlogon PID (0 if not found).
+static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *outErr, DWORD *outPid) {
+	*outDiag = 0; *outErr = 0; *outPid = 0;
 	DWORD pid = findProcPidInSession(dwSessionId, L"winlogon.exe");
-	if (pid == 0) return NULL;
+	*outPid = pid;
+	if (pid == 0) { *outDiag = 1; return NULL; }
 	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-	if (!hProc) return NULL;
+	if (!hProc) { *outDiag = 2; *outErr = GetLastError(); return NULL; }
 	HANDLE hSrc = NULL;
 	if (!OpenProcessToken(hProc, TOKEN_DUPLICATE | TOKEN_QUERY, &hSrc)) {
+		*outDiag = 3; *outErr = GetLastError();
 		CloseHandle(hProc);
 		return NULL;
 	}
@@ -72,6 +83,7 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId) {
 	HANDLE hPrimary = NULL;
 	if (!DuplicateTokenEx(hSrc, TOKEN_ALL_ACCESS, NULL,
 			SecurityImpersonation, TokenPrimary, &hPrimary)) {
+		*outDiag = 4; *outErr = GetLastError();
 		CloseHandle(hSrc);
 		return NULL;
 	}
@@ -95,9 +107,13 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId) {
 //     desktops but does not grant Secure Desktop rights.
 //
 // outPID receives the PID of the spawned process on success.
-// Returns 0 on success, negative GetLastError() on failure.
-static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
+// outStrategy receives 1 if winlogon-token path was used, 2 for SetTokenSessionId
+// fallback. outDiag/outErr/outWlPid expose why strategy 1 was rejected (see
+// openSessionSystemToken). Returns 0 on success, negative GetLastError() on failure.
+static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
+		DWORD *outStrategy, DWORD *outDiag, DWORD *outErr, DWORD *outWlPid) {
 	HANDLE hToken = NULL;
+	*outStrategy = 0;
 
 	// Enable privileges on our own token before any token manipulation.
 	// LocalSystem holds these but they are not always enabled by default.
@@ -114,10 +130,14 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID) {
 	}
 
 	// Strategy 1: borrow winlogon.exe's token from the target session.
-	hToken = openSessionSystemToken(sessionId);
+	hToken = openSessionSystemToken(sessionId, outDiag, outErr, outWlPid);
+	if (hToken) {
+		*outStrategy = 1;
+	}
 
 	// Strategy 2: craft a SYSTEM token relocated to the target session.
 	if (!hToken) {
+		*outStrategy = 2;
 		HANDLE hSysToken = NULL;
 		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hSysToken)) {
 			return -(int)GetLastError();
@@ -201,15 +221,45 @@ import (
 )
 
 // spawnInSessionGo is a Go-friendly wrapper around the C spawnInSession function.
-// Returns (pid, returnCode). returnCode 0 = success.
+// Returns (pid, returnCode). returnCode 0 = success. Logs which token strategy
+// was taken and, when the winlogon-token path is rejected, why.
 func spawnInSessionGo(sessionID int, cmdLine string) (uint32, int) {
 	cmdLineW, err := syscall.UTF16PtrFromString(cmdLine)
 	if err != nil {
 		return 0, -1
 	}
-	var pid C.DWORD
-	rc := int(C.spawnInSession(C.DWORD(sessionID), (*C.wchar_t)(unsafe.Pointer(cmdLineW)), &pid))
+	var pid, strategy, diag, errCode, wlPid C.DWORD
+	rc := int(C.spawnInSession(
+		C.DWORD(sessionID),
+		(*C.wchar_t)(unsafe.Pointer(cmdLineW)),
+		&pid, &strategy, &diag, &errCode, &wlPid,
+	))
+	logSpawnStrategy(sessionID, uint32(strategy), uint32(diag), uint32(errCode), uint32(wlPid))
 	return uint32(pid), rc
+}
+
+// logSpawnStrategy prints which token path the helper spawn used.
+//   strategy=1 → borrowed winlogon.exe's token (Secure Desktop capable)
+//   strategy=2 → SYSTEM + SetTokenSessionId fallback (no Secure Desktop access)
+// For the fallback case, diag explains why strategy 1 was skipped.
+func logSpawnStrategy(sessionID int, strategy, diag, errCode, wlPid uint32) {
+	switch strategy {
+	case 1:
+		log.Printf("spawnInSession(%d): token strategy=winlogon (PID %d)", sessionID, wlPid)
+	case 2:
+		reason := "unknown"
+		switch diag {
+		case 1:
+			reason = "winlogon.exe not found in session"
+		case 2:
+			reason = fmt.Sprintf("OpenProcess(winlogon PID %d) failed (err=%d)", wlPid, errCode)
+		case 3:
+			reason = fmt.Sprintf("OpenProcessToken failed (err=%d)", errCode)
+		case 4:
+			reason = fmt.Sprintf("DuplicateTokenEx failed (err=%d)", errCode)
+		}
+		log.Printf("spawnInSession(%d): token strategy=fallback (%s)", sessionID, reason)
+	}
 }
 
 // ── TCP pipe message types ────────────────────────────────────────────────────
@@ -656,11 +706,17 @@ func startCrossSessionStream(cfg *Config, token string, sessionID int) error {
 		ln.Close()
 		return fmt.Errorf("cross-session: utf16: %w", err)
 	}
-	var pid C.DWORD
-	if rc := C.spawnInSession(C.DWORD(sessionID), (*C.wchar_t)(unsafe.Pointer(cmdLineW)), &pid); rc != 0 {
+	var pid, strategy, diag, errCode, wlPid C.DWORD
+	rc := C.spawnInSession(
+		C.DWORD(sessionID),
+		(*C.wchar_t)(unsafe.Pointer(cmdLineW)),
+		&pid, &strategy, &diag, &errCode, &wlPid,
+	)
+	if rc != 0 {
 		ln.Close()
 		return fmt.Errorf("cross-session: spawnInSession failed (code %d)", -int(rc))
 	}
+	logSpawnStrategy(sessionID, uint32(strategy), uint32(diag), uint32(errCode), uint32(wlPid))
 	log.Printf("Stream %s: spawned helper PID %d in session %d", token, uint32(pid), sessionID)
 
 	// Build WS URL (same logic as startStream).
