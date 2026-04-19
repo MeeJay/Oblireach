@@ -196,21 +196,28 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		}
 	}
 
-	// Build environment from the user's token for TEMP/APPDATA paths
+	// Build environment block ONLY for the user-token strategy (matches
+	// RustDesk's LaunchProcessWin). For SYSTEM-context tokens (winlogon
+	// / dwm / csrss) we leave env=NULL so the child inherits the target
+	// session's system environment — passing a SYSTEM-profile env block
+	// can interfere with how Windows wires the process into the session's
+	// graphics pipeline, which is what we need for DXGI duplication.
 	LPVOID pEnv = NULL;
-	{
-		HANDLE hUserToken = NULL;
-		if (WTSQueryUserToken(sessionId, &hUserToken)) {
-			CreateEnvironmentBlock(&pEnv, hUserToken, FALSE);
-			CloseHandle(hUserToken);
+	DWORD flags = DETACHED_PROCESS;
+	if (*outStrategy == 0) {
+		if (CreateEnvironmentBlock(&pEnv, hToken, TRUE)) {
+			flags |= CREATE_UNICODE_ENVIRONMENT;
 		}
-		if (!pEnv) CreateEnvironmentBlock(&pEnv, hToken, FALSE);
 	}
 
 	STARTUPINFOW si;
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
-	si.lpDesktop = L"winsta0\\default";
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	// lpDesktop is left NULL — Windows picks the default for the token's
+	// logon session, which is WinSta0\Default for user/winlogon tokens.
+	// Setting lpDesktop="winsta0\\default" explicitly can anchor the
+	// process in a way that disrupts graphics access.
 
 	PROCESS_INFORMATION pi;
 	ZeroMemory(&pi, sizeof(pi));
@@ -223,7 +230,6 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		return -ERROR_NOT_ENOUGH_MEMORY;
 	}
 
-	DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
 	BOOL ok = CreateProcessAsUserW(
 		hToken, NULL, mutableCmd,
 		NULL, NULL, FALSE,
