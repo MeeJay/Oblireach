@@ -73,14 +73,22 @@ static void send_key(int vk, int down) {
 // switch_to_active_desktop: ensures the current thread is attached to the
 // input desktop (either "Default" for normal use or "Winlogon" for the
 // login screen). This allows SendInput to work on the logon screen.
-// Called periodically (not on every input — cached for 2 seconds).
+// Called periodically — the cache is THREAD-LOCAL because SetThreadDesktop
+// is per-thread; a global cache would let one thread race another into
+// seeing a "fresh" g_currentDesk while its own thread is still on an old
+// desktop, breaking SendInput for that thread. This was the regression
+// introduced when capture + input were split onto separate goroutines.
+static __thread HDESK t_currentDesk = NULL;
+static __thread DWORD t_deskCheckTime = 0;
+
+// Legacy global (still read by force_switch_active_desktop for backward
+// compatibility), but no longer authoritative — the per-thread state is.
 static HDESK g_currentDesk = NULL;
-static DWORD g_deskCheckTime = 0;
 
 static void switch_to_active_desktop(void) {
     DWORD now = GetTickCount();
-    if (now - g_deskCheckTime < 500 && g_currentDesk != NULL) return;
-    g_deskCheckTime = now;
+    if (now - t_deskCheckTime < 500 && t_currentDesk != NULL) return;
+    t_deskCheckTime = now;
 
     // Try to open the input desktop (the one receiving user input right now).
     // Use DESKTOP_SWITCHDESKTOP for the access check — GENERIC_ALL can fail
@@ -94,23 +102,22 @@ static void switch_to_active_desktop(void) {
     }
     if (!inputDesk) return;
 
-    // If it's different from our current desktop, switch
-    if (g_currentDesk != inputDesk) {
+    // Per-thread attachment: SetThreadDesktop moves THIS thread's desktop.
+    if (t_currentDesk != inputDesk) {
         SetThreadDesktop(inputDesk);
-        if (g_currentDesk) CloseDesktop(g_currentDesk);
-        g_currentDesk = inputDesk;
+        if (t_currentDesk) CloseDesktop(t_currentDesk);
+        t_currentDesk = inputDesk;
+        g_currentDesk = inputDesk; // mirror for diagnostics
     } else {
         CloseDesktop(inputDesk);
     }
 }
 
 // force_switch_active_desktop: bypasses the 500ms cache and re-attaches the
-// calling thread to the current input desktop. Used before re-initialising
-// DXGI capture after ACCESS_LOST (UAC prompt / workstation lock / login).
-// Windows refs the thread's desktop internally so CloseDesktop inside the
-// switch is safe even while SendInput is running on this thread.
+// CALLING thread to the current input desktop. Thread-local so callers
+// from different goroutines can't stomp each other's cached view.
 static void force_switch_active_desktop(void) {
-    g_deskCheckTime = 0;
+    t_deskCheckTime = 0;
     switch_to_active_desktop();
 }
 

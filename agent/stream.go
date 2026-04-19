@@ -702,6 +702,17 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 
 	case "key":
 		down := msg.Action == "down"
+		// Detect Ctrl+Alt+Del / Ctrl+Alt+End on the operator's keyboard and
+		// translate to SAS (SendSAS). Browsers + Windows intercept CAD locally
+		// so the 3-key combo rarely reaches us as-is; but operators often have
+		// it wired through via System Keys panels which send the keys. Map
+		// them to SAS here so the login / lock screen can actually be reached
+		// while Obliance's front-end catches up.
+		if down && msg.Ctrl && msg.Alt &&
+			(msg.Key == "Delete" || msg.Key == "Del" || msg.Key == "End") {
+			inputSAS()
+			break
+		}
 		// Try layout-aware mapping from e.key first (handles AZERTY, QWERTZ, etc.)
 		if len([]rune(msg.Key)) == 1 {
 			vk, mods := inputVKFromKey(msg.Key)
