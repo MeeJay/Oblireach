@@ -19,8 +19,26 @@ package main
 #cgo LDFLAGS: -luser32 -lgdi32
 
 #include <windows.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+
+// Checkpoint log — flushes every write so we can trace even an abrupt
+// process crash (access violation in Magnification.dll etc.).
+static void magLog(const char *fmt, ...) {
+    FILE *f = fopen("C:\\Windows\\Temp\\oblireach-mag.log", "a");
+    if (!f) return;
+    SYSTEMTIME st; GetLocalTime(&st);
+    fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d.%03d pid=%lu] ",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        (unsigned long)GetCurrentProcessId());
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fflush(f);
+    fclose(f);
+}
 
 // ── Magnification API types (from magnification.h — not in all MinGW SDKs) ──
 typedef struct tagMAGIMAGEHEADER {
@@ -78,19 +96,37 @@ static BOOL WINAPI mag_callback(
 {
     (void)hwnd; (void)destdata; (void)destheader;
     (void)unclipped; (void)clipped; (void)dirty;
+    magLog("callback: srcdata=%p cbSize=%llu stride=%u w=%u h=%u",
+        srcdata, (unsigned long long)srcheader.cbSize, srcheader.stride,
+        srcheader.width, srcheader.height);
     g_mag_buffer_valid = 0;
     if (memcmp(&srcheader.format, &GUID_WICPixelFormat32bppRGBA_Local, sizeof(GUID)) != 0) {
-        return FALSE; // unexpected format
+        magLog("callback: format mismatch, rejecting");
+        return FALSE;
+    }
+    // Sanity-cap cbSize against the declared w*h*4 + generous slack to
+    // avoid an AV if Windows passes a bogus value.
+    SIZE_T expected = (SIZE_T)srcheader.width * (SIZE_T)srcheader.height * 4;
+    if (srcheader.cbSize < expected || srcheader.cbSize > expected * 2 + 65536) {
+        magLog("callback: cbSize %llu out of expected range %llu — clamping",
+            (unsigned long long)srcheader.cbSize, (unsigned long long)expected);
+        return FALSE;
     }
     if (srcheader.cbSize > g_mag_buffer_cap) {
         free(g_mag_buffer);
         g_mag_buffer = (unsigned char*)malloc(srcheader.cbSize);
-        if (!g_mag_buffer) { g_mag_buffer_cap = 0; return FALSE; }
+        if (!g_mag_buffer) {
+            g_mag_buffer_cap = 0;
+            magLog("callback: malloc failed");
+            return FALSE;
+        }
         g_mag_buffer_cap = srcheader.cbSize;
     }
+    if (!srcdata) { magLog("callback: srcdata NULL"); return FALSE; }
     memcpy(g_mag_buffer, srcdata, srcheader.cbSize);
     g_mag_buffer_size = srcheader.cbSize;
     g_mag_buffer_valid = 1;
+    magLog("callback: ok, %llu bytes cached", (unsigned long long)srcheader.cbSize);
     return TRUE;
 }
 
@@ -113,7 +149,8 @@ static int mag_load_library(void) {
 // scaling callback. Captures the entire virtual desktop.
 // Returns 0 on success, negative error code on failure.
 static int mag_init(void) {
-    if (mag_load_library() != 0) return -10;
+    magLog("mag_init called");
+    if (mag_load_library() != 0) { magLog("mag_init: load_library failed"); return -10; }
 
     // Process must be per-monitor DPI-aware for Magnification to work.
     // (SetProcessDpiAwarenessContext if available; fall through if not.)
@@ -167,8 +204,21 @@ static int mag_init(void) {
 
     ShowWindow(g_mag_host, SW_HIDE);
 
+    magLog("mag_init: host=%p magnifier=%p vscreen=%dx%d", g_mag_host, g_mag_magnifier, w, h);
     if (!g_mag_setcb(g_mag_magnifier, (MagImageScalingCallback)mag_callback)) {
+        magLog("mag_init: MagSetImageScalingCallback failed err=%lu", GetLastError());
         return -15;
+    }
+    magLog("mag_init: callback registered OK");
+
+    // Drain the initial window messages so the Magnifier control finishes
+    // its internal setup before the first MagSetWindowSource call — without
+    // this it can fire the callback with an invalid / zero-size buffer.
+    MSG msg;
+    for (int i = 0; i < 32; i++) {
+        if (!PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) break;
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
     }
     return 0;
 }
@@ -181,19 +231,45 @@ static int mag_height(void) { return g_mag_h; }
 // with the rest of the pipeline.
 // Returns 0 on success, negative on error.
 static int mag_capture_frame(unsigned char *out_bgra) {
-    if (!g_mag_magnifier) return -20;
+    static int call_count = 0;
+    call_count++;
+    int do_log = (call_count <= 3 || call_count % 30 == 0);
+    if (do_log) magLog("capture_frame enter #%d", call_count);
+
+    if (!g_mag_magnifier) {
+        if (do_log) magLog("capture_frame: magnifier window NULL");
+        return -20;
+    }
+
+    // Drain any pending messages so the Magnifier control sees recent
+    // window state changes before we ask for pixels.
+    MSG msg;
+    for (int i = 0; i < 8; i++) {
+        if (!PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) break;
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+
     if (!SetWindowPos(g_mag_magnifier, HWND_TOP,
                        g_mag_rect.left, g_mag_rect.top,
                        g_mag_rect.right - g_mag_rect.left,
                        g_mag_rect.bottom - g_mag_rect.top, 0)) {
+        if (do_log) magLog("capture_frame: SetWindowPos failed err=%lu", GetLastError());
         return -21;
     }
     g_mag_buffer_valid = 0;
-    if (!g_mag_setsrc(g_mag_magnifier, g_mag_rect)) {
-        return -22;
-    }
-    if (!g_mag_buffer_valid || g_mag_buffer_size < (SIZE_T)(g_mag_w * g_mag_h * 4)) {
-        return -23;
+    if (do_log) magLog("capture_frame: calling MagSetWindowSource rect=(%d,%d %dx%d)",
+        g_mag_rect.left, g_mag_rect.top,
+        g_mag_rect.right - g_mag_rect.left, g_mag_rect.bottom - g_mag_rect.top);
+    BOOL ok = g_mag_setsrc(g_mag_magnifier, g_mag_rect);
+    if (do_log) magLog("capture_frame: MagSetWindowSource returned %d valid=%d size=%llu err=%lu",
+        ok, g_mag_buffer_valid, (unsigned long long)g_mag_buffer_size, GetLastError());
+    if (!ok) return -22;
+    if (!g_mag_buffer_valid) return -23;
+    if (g_mag_buffer_size < (SIZE_T)(g_mag_w * g_mag_h * 4)) {
+        if (do_log) magLog("capture_frame: buffer too small %llu < %d",
+            (unsigned long long)g_mag_buffer_size, g_mag_w * g_mag_h * 4);
+        return -24;
     }
     // Swap R<->B (RGBA → BGRA) because our encoder expects BGRA.
     SIZE_T px = g_mag_buffer_size / 4;
@@ -204,6 +280,8 @@ static int mag_capture_frame(unsigned char *out_bgra) {
         out_bgra[i*4+2] = src[i*4+0]; // R
         out_bgra[i*4+3] = src[i*4+3]; // A
     }
+    if (do_log) magLog("capture_frame: produced %llu px, returning 0",
+        (unsigned long long)px);
     return 0;
 }
 
