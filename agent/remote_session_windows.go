@@ -49,28 +49,26 @@ static DWORD findProcPidInSession(DWORD dwSessionId, LPCWSTR exeName) {
 	return found;
 }
 
-// tryBorrowToken tries to open + duplicate the primary token of the
-// process named exeName in dwSessionId. Returns NULL on any failure.
+// tryBorrowToken opens the primary token of exeName in dwSessionId and
+// returns it DIRECTLY — no DuplicateTokenEx. RustDesk's approach: calling
+// DuplicateTokenEx creates a copy whose logon-session affinity is
+// disconnected from the source token, which Windows treats as unprivileged
+// for GPU / desktop-duplication access. Using the original token handle
+// preserves that affinity and lets DXGI see the real hardware adapters
+// instead of falling back to "Microsoft Basic Render Driver" (WARP).
 static HANDLE tryBorrowToken(DWORD dwSessionId, LPCWSTR exeName, DWORD *outPid) {
 	DWORD pid = findProcPidInSession(dwSessionId, exeName);
 	if (outPid) *outPid = pid;
 	if (pid == 0) return NULL;
-	HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+	HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 	if (!hProc) return NULL;
-	HANDLE hSrc = NULL;
-	if (!OpenProcessToken(hProc, TOKEN_DUPLICATE | TOKEN_QUERY, &hSrc)) {
+	HANDLE hToken = NULL;
+	if (!OpenProcessToken(hProc, TOKEN_ALL_ACCESS, &hToken)) {
 		CloseHandle(hProc);
 		return NULL;
 	}
 	CloseHandle(hProc);
-	HANDLE hPrimary = NULL;
-	if (!DuplicateTokenEx(hSrc, TOKEN_ALL_ACCESS, NULL,
-			SecurityImpersonation, TokenPrimary, &hPrimary)) {
-		CloseHandle(hSrc);
-		return NULL;
-	}
-	CloseHandle(hSrc);
-	return hPrimary;
+	return hToken;
 }
 
 // openSessionSystemToken returns a primary SYSTEM token for dwSessionId by
@@ -157,17 +155,13 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 
 	// Strategy 0: WTSQueryUserToken — the user's primary token. Preferred
 	// whenever a user is logged in because DXGI outputs are only visible
-	// from the user's WinSta\Default.
+	// from the user's WinSta\Default. Used directly without DuplicateTokenEx
+	// to preserve the token's logon-session affinity (DXGI hardware access).
 	{
 		HANDLE hUserToken = NULL;
 		if (WTSQueryUserToken(sessionId, &hUserToken)) {
-			// Duplicate as primary so we fully own the lifetime; also makes
-			// sure CreateProcessAsUserW works even if the source changes.
-			if (DuplicateTokenEx(hUserToken, TOKEN_ALL_ACCESS, NULL,
-					SecurityImpersonation, TokenPrimary, &hToken)) {
-				*outStrategy = 0;
-			}
-			CloseHandle(hUserToken);
+			hToken = hUserToken;
+			*outStrategy = 0;
 		}
 	}
 
