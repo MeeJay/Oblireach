@@ -71,47 +71,20 @@ static HANDLE tryBorrowToken(DWORD dwSessionId, LPCWSTR exeName, DWORD *outPid) 
 	return hToken;
 }
 
-// openSessionSystemToken returns a primary SYSTEM token for dwSessionId by
-// borrowing one from an already-running SYSTEM process in that session.
-// Tries in order:
-//   1. dwm.exe  — Desktop Window Manager, actively composes to the GPU, so
-//                 its token has real graphics-adapter access (vs. WARP).
-//                 winlogon.exe's token is explicitly filtered away from GPU
-//                 access by Windows as an anti-keylogger measure, which is
-//                 why DXGI Desktop Duplication returns E_ACCESSDENIED with
-//                 it and only enumerates "Microsoft Basic Render Driver".
-//   2. csrss.exe — Client/Server Runtime Subsystem. SYSTEM, session-attached,
-//                  historically allowed GPU access for the console subsystem.
-//   3. winlogon.exe — last resort for extreme lockout (no DWM, no CSRSS? —
-//                     unusual but possible during transient states).
-//
-// outDiag / outErr / outPid are kept for compatibility with the existing
-// Go logger wiring.
-//   0 = success, 2 = all processes tried failed to yield a token.
+// openSessionSystemToken returns winlogon.exe's primary token from
+// dwSessionId — borrowed directly, not duplicated. This is the exact
+// technique RustDesk uses for no-user sessions (their LaunchProcessWin
+// with as_user=FALSE). Any other process (LogonUI, dwm, csrss) gave
+// identical E_ACCESSDENIED results in our testing, so we match RustDesk
+// 1:1.
 static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *outErr, DWORD *outPid) {
 	*outDiag = 0; *outErr = 0; *outPid = 0;
-
-	HANDLE h = NULL;
-	DWORD pid = 0;
-
-	// LogonUI.exe is the process actively rendering the sign-in screen
-	// when no user is logged in; its token has real display access.
-	h = tryBorrowToken(dwSessionId, L"LogonUI.exe", &pid);
-	if (h) { *outPid = pid; return h; }
-
-	// dwm.exe composes the desktop on GPU; its token holds GPU rights.
-	h = tryBorrowToken(dwSessionId, L"dwm.exe", &pid);
-	if (h) { *outPid = pid; return h; }
-
-	h = tryBorrowToken(dwSessionId, L"csrss.exe", &pid);
-	if (h) { *outPid = pid; return h; }
-
-	h = tryBorrowToken(dwSessionId, L"winlogon.exe", &pid);
-	if (h) { *outPid = pid; return h; }
-
-	*outDiag = 1; // nothing found / usable
-	*outErr = GetLastError();
-	return NULL;
+	HANDLE h = tryBorrowToken(dwSessionId, L"winlogon.exe", outPid);
+	if (!h) {
+		*outDiag = 1;
+		*outErr = GetLastError();
+	}
+	return h;
 }
 
 // spawnInSession launches cmdLine inside the given Windows session.
@@ -139,19 +112,10 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 	*outStrategy = 255;
 	*outDiag = 0; *outErr = 0; *outWlPid = 0;
 
-	// Enable privileges on our own token before any token manipulation.
-	// LocalSystem holds these but they are not always enabled by default.
-	{
-		HANDLE hSelf = NULL;
-		if (OpenProcessToken(GetCurrentProcess(),
-				TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hSelf)) {
-			enablePrivilege(hSelf, L"SeTcbPrivilege");              // WTSQueryUserToken
-			enablePrivilege(hSelf, L"SeAssignPrimaryTokenPrivilege");
-			enablePrivilege(hSelf, L"SeIncreaseQuotaPrivilege");
-			enablePrivilege(hSelf, L"SeDebugPrivilege");            // OpenProcess winlogon.exe
-			CloseHandle(hSelf);
-		}
-	}
+	// No explicit privilege enabling — RustDesk's LaunchProcessWin doesn't
+	// do it, they rely on the service running as LocalSystem which already
+	// has all the needed privileges enabled by default. Any extra enabling
+	// we do can subtly change token semantics and is unnecessary.
 
 	// Strategy 0: WTSQueryUserToken — the user's primary token. Preferred
 	// whenever a user is logged in because DXGI outputs are only visible
@@ -426,14 +390,10 @@ func runHelperMode(addr string) {
 		log.Printf("helper: running as user home=%s", u)
 	}
 
-	// Explicitly pin this process to WinSta0 and this (capture) thread to
-	// the Default desktop. When the helper is spawned with winlogon.exe's
-	// token, lpDesktop="winsta0\\default" in the STARTUPINFO is advisory —
-	// the process can still end up anchored to the Winlogon WinSta via
-	// token affinity, where DXGI Desktop Duplication refuses with
-	// E_ACCESSDENIED. Moving explicitly to WinSta0\Default makes
-	// IDXGIOutput1::DuplicateOutput succeed even in no-user sessions.
-	log.Printf("helper: attached to %s", inputAttachToDefaultDesktop())
+	// RustDesk doesn't call SetProcessWindowStation / SetThreadDesktop on
+	// the capture thread — they let Windows route the process to the
+	// correct WinSta/Desktop automatically from the spawning token. Doing
+	// so explicitly adds token-ACL handshakes that can block DXGI access.
 
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {

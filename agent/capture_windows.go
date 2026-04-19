@@ -567,27 +567,14 @@ func captureInit() error {
 		}
 	}
 
-	// Iterate every enumerated DXGI output and bind to the first one that
-	// supports desktop duplication. On Hyper-V basic VMs the primary output
-	// (Microsoft Basic Display / Hyper-V Video) does NOT support duplication
-	// and returns E_ACCESSDENIED, while the bundled Virtual Display Driver
-	// monitor does. Falling through the list surfaces whichever is usable.
+	// Step 1: try DXGI on every enumerated output. On Hyper-V basic VMs the
+	// primary output does not support duplication (E_ACCESSDENIED); we
+	// iterate to find one that works.
 	ret := int(C.capture_init_best())
-	if ret < 0 {
-		return fmt.Errorf("screen capture init failed (code %d)", ret)
-	}
-	captureActive = true
 	mons := enumerateMonitors()
-	picked := -1
-	if ret == 0 {
-		picked = int(C.capture_get_target_monitor())
-	}
-	if C.capture_is_gdi() != 0 {
-		failStep := int(C.dxgi_last_fail())
-		hr := uint32(C.dxgi_last_hr())
-		log.Printf("helper: capture path = GDI (no DXGI-capable output among %d — last step=%d hr=0x%08x)",
-			len(mons), failStep, hr)
-	} else {
+	if ret == 0 && C.capture_is_gdi() == 0 {
+		captureActive = true
+		picked := int(C.capture_get_target_monitor())
 		name := ""
 		if picked >= 0 && picked < len(mons) {
 			name = fmt.Sprintf(" [%s %dx%d@%d,%d]",
@@ -596,11 +583,52 @@ func captureInit() error {
 		}
 		log.Printf("helper: capture path = DXGI Desktop Duplication (monitor %d of %d)%s",
 			picked, len(mons), name)
+		return nil
 	}
+
+	// Step 2: DXGI failed everywhere OR we fell through to GDI. Before
+	// accepting GDI (which is blank on the Winlogon desktop), try the
+	// Windows Magnification API — it operates at the accessibility
+	// compositor level and bypasses the Secure-Desktop / no-user DXGI
+	// restrictions. This is the RustDesk mag.rs path.
+	if ret == 0 {
+		// capture_init_best fell through to GDI; close it first so Mag
+		// can own the screen resources cleanly.
+		C.capture_close()
+	}
+	if err := magCaptureInit(); err == nil {
+		captureActive = true
+		captureMagActive = true
+		log.Printf("helper: capture path = Magnification API (%dx%d virtual desktop)",
+			magCaptureWidth(), magCaptureHeight())
+		return nil
+	} else {
+		log.Printf("helper: Magnification init failed: %v", err)
+	}
+
+	// Step 3: last-resort GDI. Rarely produces useful frames on no-user
+	// sessions but kept as a final safety net.
+	if rc := int(C.capture_init_monitor(0)); rc < 0 {
+		return fmt.Errorf("screen capture init failed at every layer (dxgi+mag+gdi)")
+	}
+	captureActive = true
+	failStep := int(C.dxgi_last_fail())
+	hr := uint32(C.dxgi_last_hr())
+	log.Printf("helper: capture path = GDI fallback (dxgi step=%d hr=0x%08x among %d outputs)",
+		failStep, hr, len(mons))
 	return nil
 }
 
+// captureMagActive is true when captureInit picked the Magnification API
+// fallback (used for no-user / Secure-Desktop / login-screen contexts that
+// DXGI refuses).
+var captureMagActive bool
+
 func captureClose() {
+	if captureMagActive {
+		magCaptureClose()
+		captureMagActive = false
+	}
 	if captureActive {
 		C.capture_close()
 		captureActive = false
@@ -608,12 +636,18 @@ func captureClose() {
 }
 
 func captureWidth() int {
+	if captureMagActive {
+		return magCaptureWidth()
+	}
 	var w, h C.int
 	C.capture_get_size(&w, &h)
 	return int(w)
 }
 
 func captureHeight() int {
+	if captureMagActive {
+		return magCaptureHeight()
+	}
 	var w, h C.int
 	C.capture_get_size(&w, &h)
 	return int(h)
@@ -623,6 +657,19 @@ func captureHeight() int {
 // Returns actual (width, height) and any error.
 // err == nil and width>0 means a new frame was captured.
 func captureFrame(buf []byte) (width, height int, err error) {
+	if captureMagActive {
+		width = magCaptureWidth()
+		height = magCaptureHeight()
+		expected := width * height * 4
+		if len(buf) < expected {
+			return 0, 0, fmt.Errorf("captureFrame: buffer too small for mag (%d < %d)", len(buf), expected)
+		}
+		if err := magCaptureFrame(buf); err != nil {
+			return width, height, fmt.Errorf("mag frame: %w", err)
+		}
+		return width, height, nil
+	}
+
 	var w, h C.int
 	C.capture_get_size(&w, &h)
 	width = int(w)
