@@ -104,11 +104,18 @@
         <Directory Id="AmyuniDir" Name="amyuni">
           <Component Id="AmyuniFiles" Guid="B2C3D4E5-F6A7-8901-BCDE-123456780030">
             <File Id="AmyuniInf"     Source="driver-assets\amyuni\usbmmIdd.inf"         Name="usbmmIdd.inf" />
-            <File Id="AmyuniDll"     Source="driver-assets\amyuni\usbmmIdd.dll"         Name="usbmmIdd.dll" />
             <File Id="AmyuniCat"     Source="driver-assets\amyuni\usbmmidd.cat"         Name="usbmmidd.cat" />
             <File Id="AmyuniInstall" Source="driver-assets\amyuni\deviceinstaller64.exe" Name="deviceinstaller64.exe" />
             <File Id="AmyuniLicense" Source="driver-assets\amyuni\License.txt"          Name="License.txt" />
           </Component>
+          <!-- usbmmIdd.inf references the DLL in an x64\ subfolder; we must
+               preserve that layout on disk or SetupAPI fails with
+               ERROR_FILE_NOT_FOUND on the driver-store copy step. -->
+          <Directory Id="AmyuniX64Dir" Name="x64">
+            <Component Id="AmyuniX64Files" Guid="C3D4E5F6-A7B8-9012-CDEF-234567890040">
+              <File Id="AmyuniDllX64" Source="driver-assets\amyuni\x64\usbmmIdd.dll" Name="usbmmIdd.dll" />
+            </Component>
+          </Directory>
         </Directory>
 
         <!--
@@ -131,6 +138,7 @@
       <ComponentRef Id="CodecDLLs" />
       <ComponentRef Id="VddFiles" />
       <ComponentRef Id="AmyuniFiles" />
+      <ComponentRef Id="AmyuniX64Files" />
     </Feature>
 
   </Package>
