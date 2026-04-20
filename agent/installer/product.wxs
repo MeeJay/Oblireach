@@ -96,6 +96,21 @@
           </Component>
         </Directory>
 
+        <!-- Amyuni usbmmidd (WHQL-signed by Microsoft Hardware Compat Publisher,
+             zlib-style redistributable license). Installed once at service
+             start via deviceinstaller64.exe; the agent hot-plugs a monitor
+             (enableidd 1) for every no-user capture session so Winlogon/
+             LogonUI content is composited onto a display the helper can see. -->
+        <Directory Id="AmyuniDir" Name="amyuni">
+          <Component Id="AmyuniFiles" Guid="B2C3D4E5-F6A7-8901-BCDE-123456780030">
+            <File Id="AmyuniInf"     Source="driver-assets\amyuni\usbmmIdd.inf"         Name="usbmmIdd.inf" />
+            <File Id="AmyuniDll"     Source="driver-assets\amyuni\usbmmIdd.dll"         Name="usbmmIdd.dll" />
+            <File Id="AmyuniCat"     Source="driver-assets\amyuni\usbmmidd.cat"         Name="usbmmidd.cat" />
+            <File Id="AmyuniInstall" Source="driver-assets\amyuni\deviceinstaller64.exe" Name="deviceinstaller64.exe" />
+            <File Id="AmyuniLicense" Source="driver-assets\amyuni\License.txt"          Name="License.txt" />
+          </Component>
+        </Directory>
+
         <!--
           Registry config: agent reads these on first run if config.json is absent.
           Written to 64-bit hive via -arch x64 build flag.
@@ -115,6 +130,7 @@
       <ComponentRef Id="AgentConfig" />
       <ComponentRef Id="CodecDLLs" />
       <ComponentRef Id="VddFiles" />
+      <ComponentRef Id="AmyuniFiles" />
     </Feature>
 
   </Package>

@@ -430,29 +430,30 @@ func runHelperMode(addr string) {
 	// correct WinSta/Desktop automatically from the spawning token. Doing
 	// so explicitly adds token-ACL handshakes that can block DXGI access.
 
-	// On a no-user session the bundled VDD monitor is present but
-	// secondary, so Windows keeps rendering Winlogon on the physical
-	// console adapter (Hyper-V Video) which this helper can't see. Promote
-	// VDD to primary so the sign-in UI is composited on it and our capture
-	// picks it up. Running in the user-home == systemprofile check lets us
-	// only do this in the no-user case (user sessions keep their layout).
-	isNoUserSession := false
+	// On a no-user session (running with winlogon.exe's SYSTEM token) we
+	// need a virtual display the OS will actually compose to — MttVDD's
+	// always-on permanent monitor is ignored by the compositor on
+	// Server 2022/2025 when no user is logged in. Amyuni's usbmmidd
+	// supports hot-plug: `enableidd 1` presents a fresh virtual monitor
+	// to Windows at this moment, and the compositor routes Winlogon /
+	// LogonUI / UAC rendering to it. Unplug on stream end to avoid
+	// leaving phantom monitors around.
 	if home, _ := os.UserHomeDir(); home != "" &&
 		(home == `C:\WINDOWS\system32\config\systemprofile` ||
 			home == `C:\Windows\system32\config\systemprofile`) {
-		isNoUserSession = true
-		vddMakePrimary()
-	}
-
-	// On a no-user session the login UI (Winlogon/LogonUI) renders on the
-	// Winlogon desktop, not on WinSta0\Default where the process starts.
-	// The Magnification API captures the caller thread's desktop, so
-	// staying on Default makes it produce black frames even though the
-	// monitor has content (the content is on a different desktop).
-	// Switching to the active input desktop (Winlogon while no user is
-	// logged in) attaches our capture thread to where the UI actually is.
-	if isNoUserSession {
-		inputSwitchActiveDesktop()
+		if err := amyuniEnableMonitor(); err != nil {
+			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
+			vddMakePrimary()
+		} else {
+			// Give Windows a beat to enumerate the hot-plugged monitor
+			// before DXGI/Mag init tries to find it.
+			time.Sleep(1500 * time.Millisecond)
+			defer func() {
+				if err := amyuniDisableMonitor(); err != nil {
+					log.Printf("helper: amyuni disable failed: %v", err)
+				}
+			}()
+		}
 	}
 
 	// ── Init capture ─────────────────────────────────────────────────────────

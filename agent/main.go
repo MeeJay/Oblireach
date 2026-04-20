@@ -198,6 +198,14 @@ func main() {
 		log.Printf("vdd: setup failed: %v", err)
 	}
 
+	// Amyuni usbmmidd (WHQL-signed Microsoft hardware compat publisher):
+	// provides an IDD monitor that can be hot-plugged per capture session.
+	// Primary path for no-user / Winlogon capture — MttVDD's always-on
+	// monitor does not get Winlogon composition on Server 2022/2025.
+	if err := amyuniEnsureInstalled(configDir); err != nil {
+		log.Printf("amyuni: setup failed: %v", err)
+	}
+
 	runFn := func() { runCmdWS(cfg) }
 
 	// Try to run as a Windows service first; fall back to interactive mode.
