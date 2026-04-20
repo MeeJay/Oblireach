@@ -117,28 +117,45 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 	// has all the needed privileges enabled by default. Any extra enabling
 	// we do can subtly change token semantics and is unnecessary.
 
-	// Strategy 0: borrow explorer.exe's token from the target session.
-	// This is what RustDesk does (LaunchProcessWin with as_user=TRUE) and
-	// why SendInput works for them on user sessions where our previous
-	// WTSQueryUserToken-based approach got ERROR_ACCESS_DENIED (5) —
-	// WTSQueryUserToken returns the filtered user token without the
-	// interactive-session affinity that SendInput's UIPI checks require.
-	// explorer.exe is the user shell; its token has full user-session
-	// interactive rights and passes UIPI for same-integrity injection.
-	if (hToken == NULL) {
-		DWORD explorerPid = 0;
-		hToken = tryBorrowToken(sessionId, L"explorer.exe", &explorerPid);
-		if (hToken) *outStrategy = 0;
-	}
-
-	// Strategy 0b: if explorer isn't running (just-logged-on user, shell
-	// not yet up) fall back to WTSQueryUserToken — still a user context,
-	// just less UI-privileged.
-	if (hToken == NULL) {
-		HANDLE hUserToken = NULL;
-		if (WTSQueryUserToken(sessionId, &hUserToken)) {
-			hToken = hUserToken;
-			*outStrategy = 0;
+	// Strategy 0: build a SYSTEM primary token relocated to the target
+	// session. SYSTEM integrity is above Medium which is what UIPI on
+	// Windows Server 2025 requires for SendInput to reach Medium-IL user
+	// apps — an explorer.exe-borrowed or WTSQueryUserToken-derived user
+	// token runs at Medium IL and gets err=5 (ACCESS_DENIED) on every
+	// SendInput call, even targeting the same user's own windows. SYSTEM
+	// bypasses UIPI. Capture side still works because Magnification API
+	// operates independently of token integrity.
+	//
+	// This is the historically working path that we briefly abandoned in
+	// pursuit of RustDesk parity. RustDesk seems to tolerate whatever UIPI
+	// does on their test OSes (older Server / Windows 10) but Server 2025
+	// is stricter.
+	{
+		// Privileges must be enabled — LocalSystem holds them but they are
+		// not always active in the current token.
+		HANDLE hSelf = NULL;
+		if (OpenProcessToken(GetCurrentProcess(),
+				TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hSelf)) {
+			enablePrivilege(hSelf, L"SeTcbPrivilege");
+			enablePrivilege(hSelf, L"SeAssignPrimaryTokenPrivilege");
+			enablePrivilege(hSelf, L"SeIncreaseQuotaPrivilege");
+			enablePrivilege(hSelf, L"SeDebugPrivilege");
+			CloseHandle(hSelf);
+		}
+		HANDLE hSysToken = NULL;
+		if (OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hSysToken)) {
+			HANDLE hPrimary = NULL;
+			if (DuplicateTokenEx(hSysToken, TOKEN_ALL_ACCESS, NULL,
+					SecurityImpersonation, TokenPrimary, &hPrimary)) {
+				DWORD sid = sessionId;
+				if (SetTokenInformation(hPrimary, TokenSessionId, &sid, sizeof(sid))) {
+					hToken = hPrimary;
+					*outStrategy = 0;
+				} else {
+					CloseHandle(hPrimary);
+				}
+			}
+			CloseHandle(hSysToken);
 		}
 	}
 
