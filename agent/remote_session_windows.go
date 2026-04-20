@@ -117,11 +117,24 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 	// has all the needed privileges enabled by default. Any extra enabling
 	// we do can subtly change token semantics and is unnecessary.
 
-	// Strategy 0: WTSQueryUserToken — the user's primary token. Preferred
-	// whenever a user is logged in because DXGI outputs are only visible
-	// from the user's WinSta\Default. Used directly without DuplicateTokenEx
-	// to preserve the token's logon-session affinity (DXGI hardware access).
-	{
+	// Strategy 0: borrow explorer.exe's token from the target session.
+	// This is what RustDesk does (LaunchProcessWin with as_user=TRUE) and
+	// why SendInput works for them on user sessions where our previous
+	// WTSQueryUserToken-based approach got ERROR_ACCESS_DENIED (5) —
+	// WTSQueryUserToken returns the filtered user token without the
+	// interactive-session affinity that SendInput's UIPI checks require.
+	// explorer.exe is the user shell; its token has full user-session
+	// interactive rights and passes UIPI for same-integrity injection.
+	if (hToken == NULL) {
+		DWORD explorerPid = 0;
+		hToken = tryBorrowToken(sessionId, L"explorer.exe", &explorerPid);
+		if (hToken) *outStrategy = 0;
+	}
+
+	// Strategy 0b: if explorer isn't running (just-logged-on user, shell
+	// not yet up) fall back to WTSQueryUserToken — still a user context,
+	// just less UI-privileged.
+	if (hToken == NULL) {
 		HANDLE hUserToken = NULL;
 		if (WTSQueryUserToken(sessionId, &hUserToken)) {
 			hToken = hUserToken;
