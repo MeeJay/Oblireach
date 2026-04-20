@@ -190,28 +190,32 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		}
 	}
 
-	// Build environment block ONLY for the user-token strategy (matches
-	// RustDesk's LaunchProcessWin). For SYSTEM-context tokens (winlogon
-	// / dwm / csrss) we leave env=NULL so the child inherits the target
-	// session's system environment — passing a SYSTEM-profile env block
-	// can interfere with how Windows wires the process into the session's
-	// graphics pipeline, which is what we need for DXGI duplication.
+	// Build the environment block from a real user token whenever possible
+	// (TEMP/APPDATA paths, DISPLAY routing). Fall back to our own token
+	// (SYSTEM-crafted) when no user is logged in. The old working path did
+	// this unconditionally; trimming it introduced UIPI regressions that
+	// showed up as SendInput err=5.
 	LPVOID pEnv = NULL;
-	DWORD flags = DETACHED_PROCESS;
-	if (*outStrategy == 0) {
-		if (CreateEnvironmentBlock(&pEnv, hToken, TRUE)) {
-			flags |= CREATE_UNICODE_ENVIRONMENT;
+	{
+		HANDLE hUserToken = NULL;
+		if (WTSQueryUserToken(sessionId, &hUserToken)) {
+			CreateEnvironmentBlock(&pEnv, hUserToken, FALSE);
+			CloseHandle(hUserToken);
 		}
+		if (!pEnv) CreateEnvironmentBlock(&pEnv, hToken, FALSE);
 	}
 
 	STARTUPINFOW si;
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
-	si.dwFlags = STARTF_USESHOWWINDOW;
-	// lpDesktop is left NULL — Windows picks the default for the token's
-	// logon session, which is WinSta0\Default for user/winlogon tokens.
-	// Setting lpDesktop="winsta0\\default" explicitly can anchor the
-	// process in a way that disrupts graphics access.
+	si.lpDesktop = L"winsta0\\default";
+	// Explicit desktop = put the child on the interactive desktop of the
+	// target session. With lpDesktop=NULL Windows derives it from the
+	// spawning token's logon-session defaults, which for a SYSTEM-crafted
+	// token relocated via SetTokenInformation ends up on a service window
+	// station. From there SendInput gets err=5 / ACCESS_DENIED even though
+	// SYSTEM integrity should bypass UIPI — Windows also blocks service-
+	// station processes from injecting into user desktops.
 
 	PROCESS_INFORMATION pi;
 	ZeroMemory(&pi, sizeof(pi));
@@ -224,6 +228,7 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		return -ERROR_NOT_ENOUGH_MEMORY;
 	}
 
+	DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
 	BOOL ok = CreateProcessAsUserW(
 		hToken, NULL, mutableCmd,
 		NULL, NULL, FALSE,
@@ -507,33 +512,7 @@ func runHelperMode(addr string) {
 	inputCh := make(chan []byte, 64)
 	codecCh := make(chan string, 4)
 	monitorCh := make(chan int, 4)
-	blockCh := make(chan bool, 4)
-
-	// ── Input goroutine (separate OS thread) ───────────────────────────────
-	// SendInput and BlockInput need to run on a thread that can switch to
-	// the Winlogon/Default desktop as input routing requires. The capture
-	// thread stays pinned to winsta0\default so DXGI keeps working; this
-	// goroutine can move freely without breaking duplication.
-	go func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		defer inputUnblock()
-		for {
-			select {
-			case <-stopCh:
-				return
-			case block := <-blockCh:
-				inputBlock(block)
-				confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
-				_ = pipeSend(conn, pipeTypeControl, confirm)
-			case payload, ok := <-inputCh:
-				if !ok {
-					return
-				}
-				dispatchInputJSON(payload, w, h)
-			}
-		}
-	}()
+	blockCh := make(chan bool, 4) // handled by main capture thread
 
 	// ── Reader goroutine: input / stop from service ───────────────────────────
 	go func() {
@@ -613,10 +592,22 @@ func runHelperMode(addr string) {
 	useH265 := false
 	useAV1 := false
 
+	defer inputUnblock()
 	for {
 		select {
 		case <-stopCh:
 			return
+
+		case block := <-blockCh:
+			inputBlock(block)
+			confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
+			_ = pipeSend(conn, pipeTypeControl, confirm)
+
+		case payload, ok := <-inputCh:
+			if !ok {
+				return
+			}
+			dispatchInputJSON(payload, w, h)
 
 		case newIdx := <-monitorCh:
 			log.Printf("helper: monitor switch to %d", newIdx)
