@@ -436,10 +436,23 @@ func runHelperMode(addr string) {
 	// VDD to primary so the sign-in UI is composited on it and our capture
 	// picks it up. Running in the user-home == systemprofile check lets us
 	// only do this in the no-user case (user sessions keep their layout).
+	isNoUserSession := false
 	if home, _ := os.UserHomeDir(); home != "" &&
 		(home == `C:\WINDOWS\system32\config\systemprofile` ||
 			home == `C:\Windows\system32\config\systemprofile`) {
+		isNoUserSession = true
 		vddMakePrimary()
+	}
+
+	// On a no-user session the login UI (Winlogon/LogonUI) renders on the
+	// Winlogon desktop, not on WinSta0\Default where the process starts.
+	// The Magnification API captures the caller thread's desktop, so
+	// staying on Default makes it produce black frames even though the
+	// monitor has content (the content is on a different desktop).
+	// Switching to the active input desktop (Winlogon while no user is
+	// logged in) attaches our capture thread to where the UI actually is.
+	if isNoUserSession {
+		inputSwitchActiveDesktop()
 	}
 
 	// ── Init capture ─────────────────────────────────────────────────────────
