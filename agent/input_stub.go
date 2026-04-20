@@ -15,3 +15,4 @@ func inputBlock(block bool)                             {}
 func inputUnblock()                                     {}
 func inputSwitchActiveDesktop()                         {}
 func inputAttachToDefaultDesktop() string               { return "" }
+func logInputEvent(msg string)                          {}

@@ -685,6 +685,14 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 		return
 	}
 
+	// Log non-mouse input events to the input diag log so we can see what
+	// Obliance's "Ctrl+Alt+Del" / system-keys buttons actually send.
+	// Filtering out mouse events to keep the noise down.
+	if msg.Type != "mouse" {
+		logInputEvent(fmt.Sprintf("rx: type=%q action=%q key=%q code=%q ctrl=%v alt=%v shift=%v meta=%v",
+			msg.Type, msg.Action, msg.Key, msg.Code, msg.Ctrl, msg.Alt, msg.Shift, msg.Meta))
+	}
+
 	switch msg.Type {
 	case "mouse":
 		x := int(msg.X)
@@ -702,14 +710,15 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 
 	case "key":
 		down := msg.Action == "down"
-		// Detect Ctrl+Alt+Del / Ctrl+Alt+End on the operator's keyboard and
-		// translate to SAS (SendSAS). Browsers + Windows intercept CAD locally
-		// so the 3-key combo rarely reaches us as-is; but operators often have
-		// it wired through via System Keys panels which send the keys. Map
-		// them to SAS here so the login / lock screen can actually be reached
-		// while Obliance's front-end catches up.
+		// Detect Ctrl+Alt+Del / Ctrl+Alt+End and translate to SAS (SendSAS).
+		// Obliance's Ctrl+Alt+Del button (ObliReachViewer.tsx) sends three
+		// keydown events with the physical `code` field set to "Delete" —
+		// not the browser-layout `key` field — so we match both. System
+		// Keys panels that send via `key` (localised labels) also work.
 		if down && msg.Ctrl && msg.Alt &&
-			(msg.Key == "Delete" || msg.Key == "Del" || msg.Key == "End") {
+			(msg.Key == "Delete" || msg.Key == "Del" || msg.Key == "End" ||
+				msg.Code == "Delete" || msg.Code == "Del" || msg.Code == "End" ||
+				msg.Code == "NumpadDecimal") {
 			inputSAS()
 			break
 		}
