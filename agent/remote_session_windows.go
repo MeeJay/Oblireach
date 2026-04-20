@@ -395,6 +395,18 @@ func runHelperMode(addr string) {
 	// correct WinSta/Desktop automatically from the spawning token. Doing
 	// so explicitly adds token-ACL handshakes that can block DXGI access.
 
+	// On a no-user session the bundled VDD monitor is present but
+	// secondary, so Windows keeps rendering Winlogon on the physical
+	// console adapter (Hyper-V Video) which this helper can't see. Promote
+	// VDD to primary so the sign-in UI is composited on it and our capture
+	// picks it up. Running in the user-home == systemprofile check lets us
+	// only do this in the no-user case (user sessions keep their layout).
+	if home, _ := os.UserHomeDir(); home != "" &&
+		(home == `C:\WINDOWS\system32\config\systemprofile` ||
+			home == `C:\Windows\system32\config\systemprofile`) {
+		vddMakePrimary()
+	}
+
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
 		log.Fatalf("helper: captureInit failed: %v", err)

@@ -7,6 +7,31 @@ package main
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdarg.h>
+
+// Input diagnostic log — same pattern as mag log, flushes per line so we
+// can trace even when SendInput silently no-ops (most common on desktop
+// mismatch).
+static void inputLog(const char *fmt, ...) {
+    FILE *f = fopen("C:\\Windows\\Temp\\oblireach-input.log", "a");
+    if (!f) return;
+    SYSTEMTIME st; GetLocalTime(&st);
+    fprintf(f, "[%04d-%02d-%02d %02d:%02d:%02d.%03d pid=%lu tid=%lu] ",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId());
+    va_list ap; va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fflush(f);
+    fclose(f);
+}
+
+// inputLogGo: non-variadic wrapper callable from Go via CGo (Go can't call
+// C varargs functions).
+static void inputLogGo(const char *msg) {
+    inputLog("%s", msg);
+}
 
 // Forward declaration
 static void switch_to_active_desktop(void);
@@ -28,7 +53,13 @@ static void send_mouse_move(int screen_w, int screen_h, int x, int y) {
     if (g_use_virtual_desk) inp.mi.dwFlags |= MOUSEEVENTF_VIRTUALDESK;
     inp.mi.dx = (LONG)(x * 65535 / (screen_w > 1 ? screen_w - 1 : 1));
     inp.mi.dy = (LONG)(y * 65535 / (screen_h > 1 ? screen_h - 1 : 1));
-    SendInput(1, &inp, sizeof(INPUT));
+    UINT sent = SendInput(1, &inp, sizeof(INPUT));
+    static int log_count = 0;
+    if (log_count < 5 || log_count % 100 == 0) {
+        inputLog("mouse_move: sent=%u err=%lu x=%d y=%d screen=%dx%d vdk=%d",
+            sent, sent ? 0 : GetLastError(), x, y, screen_w, screen_h, g_use_virtual_desk);
+    }
+    log_count++;
 }
 
 // send_mouse_button: press/release a mouse button.
@@ -67,7 +98,9 @@ static void send_key(int vk, int down) {
     inp.type = INPUT_KEYBOARD;
     inp.ki.wVk = (WORD)vk;
     if (!down) inp.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(1, &inp, sizeof(INPUT));
+    UINT sent = SendInput(1, &inp, sizeof(INPUT));
+    inputLog("send_key: vk=0x%02x down=%d sent=%u err=%lu",
+        vk, down, sent, sent ? 0 : GetLastError());
 }
 
 // switch_to_active_desktop: ensures the current thread is attached to the
@@ -96,18 +129,30 @@ static void switch_to_active_desktop(void) {
     HDESK inputDesk = OpenInputDesktop(0, FALSE,
         DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
         DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU);
+    DWORD openErr = inputDesk ? 0 : GetLastError();
     if (!inputDesk) {
         // Fallback: try with minimal rights (enough for SetThreadDesktop + SendInput)
         inputDesk = OpenInputDesktop(0, FALSE, DESKTOP_SWITCHDESKTOP);
     }
-    if (!inputDesk) return;
+    if (!inputDesk) {
+        inputLog("switch_desk: OpenInputDesktop failed fullAccess_err=%lu minAccess_err=%lu",
+            openErr, GetLastError());
+        return;
+    }
+
+    char name[128] = {0};
+    DWORD needed = 0;
+    GetUserObjectInformationA(inputDesk, UOI_NAME, name, sizeof(name), &needed);
 
     // Per-thread attachment: SetThreadDesktop moves THIS thread's desktop.
     if (t_currentDesk != inputDesk) {
-        SetThreadDesktop(inputDesk);
+        BOOL ok = SetThreadDesktop(inputDesk);
+        DWORD setErr = ok ? 0 : GetLastError();
         if (t_currentDesk) CloseDesktop(t_currentDesk);
         t_currentDesk = inputDesk;
         g_currentDesk = inputDesk; // mirror for diagnostics
+        inputLog("switch_desk: attached to '%s' (SetThreadDesktop ok=%d err=%lu)",
+            name, ok, setErr);
     } else {
         CloseDesktop(inputDesk);
     }
@@ -233,6 +278,7 @@ static int clipboard_set_text(const char *utf8) {
 import "C"
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 )
@@ -304,9 +350,21 @@ func inputKey(vk int, down bool) {
 func inputSAS() {
 	dll := syscall.NewLazyDLL("sas.dll")
 	proc := dll.NewProc("SendSAS")
-	if proc.Find() == nil {
-		proc.Call(0) // FALSE = software SAS
+	findErr := proc.Find()
+	if findErr != nil {
+		logInputEvent(fmt.Sprintf("SAS: sas.dll SendSAS unavailable: %v", findErr))
+		return
 	}
+	r1, _, callErr := proc.Call(0) // FALSE = software SAS
+	logInputEvent(fmt.Sprintf("SAS: SendSAS(FALSE) → r1=%d err=%v", r1, callErr))
+}
+
+// logInputEvent writes a short line to the shared input log so we can trace
+// what the helper is actually doing with operator input.
+func logInputEvent(msg string) {
+	cstr := C.CString(msg)
+	C.inputLogGo(cstr)
+	C.free(unsafe.Pointer(cstr))
 }
 
 // inputVKFromKey converts a browser e.key string (single character) to
