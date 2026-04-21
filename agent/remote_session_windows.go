@@ -436,11 +436,24 @@ func runHelperMode(addr string) {
 	// Server 2022/2025 when no user is logged in. Amyuni's usbmmidd
 	// supports hot-plug: `enableidd 1` presents a fresh virtual monitor
 	// to Windows at this moment, and the compositor routes Winlogon /
-	// LogonUI / UAC rendering to it. Unplug on stream end to avoid
-	// leaving phantom monitors around.
+	// LogonUI / UAC rendering to it.
+	//
+	// The drivers are installed lazily on first use rather than at
+	// service startup: pre-installing from main() blocks the SCM
+	// start-timeout when the system already has phantoms, and most
+	// sessions (normal user / RDP) don't need a virtual display anyway.
 	if home, _ := os.UserHomeDir(); home != "" &&
 		(home == `C:\WINDOWS\system32\config\systemprofile` ||
 			home == `C:\Windows\system32\config\systemprofile`) {
+		// Ensure drivers are in the store. Idempotent — short path on
+		// subsequent calls once the marker file is present.
+		if err := amyuniEnsureInstalled(configDir); err != nil {
+			log.Printf("helper: amyuni lazy install: %v", err)
+		}
+		if err := vddEnsureInstalled(configDir); err != nil {
+			log.Printf("helper: vdd lazy install: %v", err)
+		}
+
 		if err := amyuniEnableMonitor(); err != nil {
 			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
 			vddMakePrimary()
