@@ -57,10 +57,12 @@ func amyuniBundleDir() string {
 	return ""
 }
 
-// amyuniEnsureInstalled copies Amyuni publisher cert to TrustedPublisher
-// (for unattended install on machines that haven't trusted Microsoft's
-// hardware compat publisher — normally always trusted but belt-and-braces),
-// then runs `deviceinstaller64 install usbmmidd.inf usbmmidd`. Idempotent.
+// amyuniEnsureInstalled runs `deviceinstaller64 install usbmmidd.inf usbmmidd`
+// once. Idempotent — the installer returns non-zero exit codes when the
+// driver is already present (exit 1 "already installed", exit 2 after an
+// interrupted re-install), so we treat "install succeeded" as "device is
+// actually enumerable in the system" via amyuniDevicePresent().
+// Also cleans up any phantom monitors left from previous crashed helpers.
 func amyuniEnsureInstalled(configDir string) error {
 	bundle := amyuniBundleDir()
 	if bundle == "" {
@@ -71,36 +73,80 @@ func amyuniEnsureInstalled(configDir string) error {
 		return fmt.Errorf("amyuni: mkdir %s: %w", stateDir, err)
 	}
 	marker := filepath.Join(stateDir, amyuniInstalled)
+	markerPresent := false
 	if _, err := os.Stat(marker); err == nil {
-		if amyuniDevicePresent() {
-			return nil
+		markerPresent = true
+	}
+	deviceAlready := amyuniDevicePresent()
+
+	if !markerPresent || !deviceAlready {
+		installer := filepath.Join(bundle, "deviceinstaller64.exe")
+		if _, err := os.Stat(installer); err != nil {
+			return fmt.Errorf("amyuni: deviceinstaller64.exe not in bundle")
 		}
-		log.Printf("amyuni: marker present but device missing — reinstalling")
-		_ = os.Remove(marker)
+		log.Printf("amyuni: running deviceinstaller64 install usbmmIdd.inf usbmmidd")
+		cmd := exec.Command(installer, "install", "usbmmIdd.inf", "usbmmidd")
+		cmd.Dir = bundle
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		out, _ := cmd.CombinedOutput()
+		log.Printf("amyuni: installer output:\n%s", strings.TrimSpace(string(out)))
 	}
 
-	installer := filepath.Join(bundle, "deviceinstaller64.exe")
-	if _, err := os.Stat(installer); err != nil {
-		return fmt.Errorf("amyuni: deviceinstaller64.exe not in bundle")
+	// Verify device is in the system — deviceinstaller64 exit code is
+	// unreliable, check PnP state directly.
+	if !amyuniDevicePresent() {
+		return fmt.Errorf("amyuni: install ran but no usbmmidd device present")
 	}
-	log.Printf("amyuni: running %s install usbmmidd.inf usbmmidd", installer)
-	cmd := exec.Command(installer, "install", "usbmmIdd.inf", "usbmmidd")
-	cmd.Dir = bundle
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	out, err := cmd.CombinedOutput()
-	log.Printf("amyuni: installer output:\n%s", strings.TrimSpace(string(out)))
-	if err != nil {
-		return fmt.Errorf("amyuni: install failed: %w", err)
-	}
+
+	// Cleanup: remove every phantom monitor from previous helpers that
+	// crashed before their deferred unplug. enableidd 0 removes one at a
+	// time; loop until no more exist, cap to avoid infinite loop if
+	// something goes wrong.
+	amyuniUnplugAll()
+
 	_ = os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0644)
+	log.Printf("amyuni: driver ready, phantom monitors cleared")
 	return nil
 }
 
-// amyuniEnableMonitor plugs one virtual monitor into the system. Equivalent
-// to `deviceinstaller64 enableidd 1`. Called at the start of a capture
-// helper on no-user / disconnected sessions where the OS wouldn't otherwise
-// have an active display to render to.
+// amyuniUnplugAll calls enableidd 0 until the next call reports there are
+// no more monitors to remove (or a safety cap is reached).
+func amyuniUnplugAll() {
+	for i := 0; i < 8; i++ {
+		if amyuniActiveMonitorCount() == 0 {
+			return
+		}
+		if err := amyuniRunEnableIdd("0"); err != nil {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// amyuniActiveMonitorCount returns how many USB Mobile Monitor Virtual
+// Display devices are currently enumerated AND OK. PnP "OK" state
+// correlates with "a monitor is actively plugged from the driver".
+func amyuniActiveMonitorCount() int {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command",
+		`(Get-PnpDevice | Where-Object { ($_.FriendlyName -like '*USB Mobile Monitor*' -or $_.InstanceId -like '*usbmmidd*') -and $_.Status -eq 'OK' } | Measure-Object).Count`)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+	return n
+}
+
+// amyuniEnableMonitor ensures exactly ONE Amyuni monitor is plugged, no
+// more no less. Clears any phantoms first (from previous crashed helpers)
+// then plugs one fresh monitor. Keeping count==1 is critical because the
+// capture path captures the whole virtual screen, which grows with each
+// active monitor (800+1920+... = several-K-wide rect) and crashes both the
+// Magnification API and the H.264 encoder at extreme widths.
 func amyuniEnableMonitor() error {
+	amyuniUnplugAll()
 	return amyuniRunEnableIdd("1")
 }
 
