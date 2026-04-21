@@ -596,15 +596,24 @@ func captureInit() error {
 		// can own the screen resources cleanly.
 		C.capture_close()
 	}
-	if err := magCaptureInit(); err == nil {
+	// Prefer capturing only the Amyuni virtual monitor rect — multi-monitor
+	// Magnification over the whole virtual desktop hangs on wide layouts
+	// (Hyper-V 1024 + Amyuni 1920 = 2944px-wide rect crashes Mag + OpenH264).
+	var magErr error
+	if ax, ay, aw, ah := amyuniMonitorRect(); aw > 0 && ah > 0 {
+		log.Printf("helper: targeting Amyuni monitor rect (%d,%d %dx%d) for Magnification", ax, ay, aw, ah)
+		magErr = magCaptureInitRect(ax, ay, aw, ah)
+	} else {
+		magErr = magCaptureInit()
+	}
+	if magErr == nil {
 		captureActive = true
 		captureMagActive = true
-		log.Printf("helper: capture path = Magnification API (%dx%d virtual desktop)",
+		log.Printf("helper: capture path = Magnification API (%dx%d)",
 			magCaptureWidth(), magCaptureHeight())
 		return nil
-	} else {
-		log.Printf("helper: Magnification init failed: %v", err)
 	}
+	log.Printf("helper: Magnification init failed: %v", magErr)
 
 	// Step 3: last-resort GDI. Rarely produces useful frames on no-user
 	// sessions but kept as a final safety net.

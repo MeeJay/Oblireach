@@ -15,6 +15,54 @@ static const GUID GUID_DEVCLASS_DISPLAY = {
     0x4D36E968, 0xE325, 0x11CE, { 0xBF, 0xC1, 0x08, 0x00, 0x2B, 0xE1, 0x03, 0x18 }
 };
 
+// vddSetDisableState sends a DIF_PROPERTYCHANGE request with DICS_DISABLE
+// (disable=1) or DICS_ENABLE (disable=0) to every Root\MttVDD instance.
+// Returns 0 on success, negative Windows error code on failure.
+static int vddSetDisableState(int disable) {
+    HDEVINFO devInfo = SetupDiGetClassDevsW(&GUID_DEVCLASS_DISPLAY, NULL, NULL, DIGCF_PRESENT);
+    if (devInfo == INVALID_HANDLE_VALUE) return -(int)GetLastError();
+    SP_DEVINFO_DATA devData;
+    devData.cbSize = sizeof(devData);
+    int lastErr = 0;
+    int matchedCount = 0;
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(devInfo, i, &devData); i++) {
+        wchar_t hwid[512] = {0};
+        DWORD hwType = 0;
+        if (!SetupDiGetDeviceRegistryPropertyW(devInfo, &devData, SPDRP_HARDWAREID,
+                &hwType, (PBYTE)hwid, sizeof(hwid), NULL)) continue;
+        int match = 0;
+        wchar_t *p = hwid;
+        while (*p) {
+            if (_wcsicmp(p, L"Root\\MttVDD") == 0 || _wcsicmp(p, L"MttVDD") == 0) {
+                match = 1; break;
+            }
+            p += wcslen(p) + 1;
+        }
+        if (!match) continue;
+        matchedCount++;
+
+        SP_PROPCHANGE_PARAMS pcp;
+        ZeroMemory(&pcp, sizeof(pcp));
+        pcp.ClassInstallHeader.cbSize = sizeof(SP_CLASSINSTALL_HEADER);
+        pcp.ClassInstallHeader.InstallFunction = DIF_PROPERTYCHANGE;
+        pcp.StateChange = disable ? DICS_DISABLE : DICS_ENABLE;
+        pcp.Scope = DICS_FLAG_GLOBAL;
+        pcp.HwProfile = 0;
+        if (!SetupDiSetClassInstallParams(devInfo, &devData,
+                (SP_CLASSINSTALL_HEADER *)&pcp, sizeof(pcp))) {
+            lastErr = GetLastError();
+            continue;
+        }
+        if (!SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, devInfo, &devData)) {
+            lastErr = GetLastError();
+        }
+    }
+    SetupDiDestroyDeviceInfoList(devInfo);
+    if (matchedCount == 0) return 0; // nothing to do
+    if (lastErr != 0) return -lastErr;
+    return 0;
+}
+
 // vddDeviceExists returns 1 if any device with hardware id "Root\MttVDD"
 // is already enumerated in the system, 0 otherwise. Used to skip the
 // instantiation step on subsequent service starts.
@@ -110,6 +158,25 @@ import (
 // in the system. Cheap check (enumerates Display class PnP devices).
 func vddDevicePresent() bool {
 	return C.vddDeviceExists() != 0
+}
+
+// vddDisable sets the Root\MttVDD device to DICS_DISABLE so Windows does
+// not advertise its output to the virtual-screen calculation. Used when
+// Amyuni is our active virtual display so the two don't compose into a
+// single giant virtual desktop (e.g. 800+1920 = 2720px wide) that kills
+// OpenH264 and Magnification API. Idempotent — safe if device absent or
+// already disabled.
+func vddDisable() error {
+	if !vddDevicePresent() {
+		return nil
+	}
+	// Use SetupDi via a short C helper.
+	rc := int(C.vddSetDisableState(1))
+	if rc != 0 {
+		return fmt.Errorf("vddDisable: err=%d / 0x%x", -rc, uint32(-rc))
+	}
+	log.Printf("vdd: MttVDD disabled (Amyuni is the active virtual display)")
+	return nil
 }
 
 // vddEnsureDevicePresent instantiates a Root\MttVDD device node (if none

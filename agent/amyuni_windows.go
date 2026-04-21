@@ -40,6 +40,32 @@ func amyuniAssetsDir(configDir string) string {
 	return filepath.Join(configDir, amyuniBundleSubdir)
 }
 
+// amyuniMonitorRect returns the (x, y, w, h) of the USB Mobile Monitor
+// virtual display, found via EnumDisplayDevicesW + EnumDisplaySettings.
+// Returns w=0 if no Amyuni monitor is attached — caller should fall back
+// to whole-virtual-screen capture or some other strategy.
+func amyuniMonitorRect() (x, y, w, h int) {
+	// EnumDisplayDevices gives us {DeviceName="\\.\DISPLAYn", DeviceString="<adapter>"}.
+	// We iterate indices 0..15 and pick the one whose DeviceString mentions
+	// "USB Mobile Monitor" (Amyuni's adapter name).
+	for idx := uint32(0); idx < 16; idx++ {
+		name, desc, ok := enumDisplayDeviceAt(idx)
+		if !ok {
+			break
+		}
+		if !strings.Contains(strings.ToLower(desc), "usb mobile monitor") {
+			continue
+		}
+		dx, dy, dw, dh, ok := displayCurrentRect(name)
+		if !ok {
+			continue
+		}
+		return dx, dy, dw, dh
+	}
+	return 0, 0, 0, 0
+}
+
+
 func amyuniBundleDir() string {
 	exe, err := os.Executable()
 	if err != nil {

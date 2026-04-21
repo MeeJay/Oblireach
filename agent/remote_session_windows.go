@@ -458,6 +458,13 @@ func runHelperMode(addr string) {
 			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
 			vddMakePrimary()
 		} else {
+			// Disable the MttVDD device: it would otherwise add its 800x600
+			// output to the virtual-screen calculation, combining with
+			// Amyuni's 1920x1080 into a 2720x1080 rect that kills the
+			// Magnification + OpenH264 capture pipeline.
+			if err := vddDisable(); err != nil {
+				log.Printf("helper: vdd disable failed (non-fatal): %v", err)
+			}
 			// Give Windows a beat to enumerate the hot-plugged monitor
 			// before DXGI/Mag init tries to find it.
 			time.Sleep(1500 * time.Millisecond)

@@ -145,12 +145,19 @@ static int mag_load_library(void) {
     return 0;
 }
 
-// mag_init creates the host + magnifier child windows and registers the
-// scaling callback. Captures the entire virtual desktop.
-// Returns 0 on success, negative error code on failure.
-static int mag_init(void) {
-    magLog("mag_init called");
-    if (mag_load_library() != 0) { magLog("mag_init: load_library failed"); return -10; }
+// mag_init_rect creates the host + magnifier child windows and registers
+// the scaling callback. Captures the rect (x, y, w, h). If w == 0 || h == 0
+// the caller wants "whole virtual desktop" — we resolve that via
+// GetSystemMetrics inside. Returns 0 on success, negative error code.
+//
+// Capturing a SPECIFIC rect (rather than the entire virtual desktop) is
+// important when Windows has multiple monitors attached: capturing a
+// multi-monitor rect kills Magnification + OpenH264 encoder on wide
+// virtual screens (e.g. 2720x1080 Hyper-V + Amyuni combo). Targeting
+// just the Amyuni monitor gives a clean 1920x1080 frame.
+static int mag_init_rect(int rect_x, int rect_y, int rect_w, int rect_h) {
+    magLog("mag_init_rect called (%d,%d %dx%d)", rect_x, rect_y, rect_w, rect_h);
+    if (mag_load_library() != 0) { magLog("mag_init_rect: load_library failed"); return -10; }
 
     // Process must be per-monitor DPI-aware for Magnification to work.
     // (SetProcessDpiAwarenessContext if available; fall through if not.)
@@ -164,10 +171,15 @@ static int mag_init(void) {
         }
     }
 
-    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    int x, y, w, h;
+    if (rect_w > 0 && rect_h > 0) {
+        x = rect_x; y = rect_y; w = rect_w; h = rect_h;
+    } else {
+        x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    }
     if (w <= 0 || h <= 0) return -11;
 
     g_mag_rect.left = x;
@@ -304,10 +316,26 @@ import (
 
 var magActive bool
 
+// magCaptureInit starts Magnification over the entire virtual screen.
+// Prefer magCaptureInitRect when a specific monitor is known (avoids
+// multi-monitor crashes).
 func magCaptureInit() error {
-	rc := int(C.mag_init())
+	rc := int(C.mag_init_rect(0, 0, 0, 0))
 	if rc < 0 {
 		return fmt.Errorf("magnification init failed (code %d)", rc)
+	}
+	magActive = true
+	return nil
+}
+
+// magCaptureInitRect starts Magnification over a specific rect. Used when
+// we know which monitor we want (e.g. the Amyuni hot-plugged one) so the
+// capture doesn't span a huge multi-monitor virtual screen that hangs
+// Magnification or crashes OpenH264.
+func magCaptureInitRect(x, y, w, h int) error {
+	rc := int(C.mag_init_rect(C.int(x), C.int(y), C.int(w), C.int(h)))
+	if rc < 0 {
+		return fmt.Errorf("magnification init rect (%d,%d %dx%d) failed (code %d)", x, y, w, h, rc)
 	}
 	magActive = true
 	return nil
