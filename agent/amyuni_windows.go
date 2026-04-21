@@ -58,11 +58,9 @@ func amyuniBundleDir() string {
 }
 
 // amyuniEnsureInstalled runs `deviceinstaller64 install usbmmidd.inf usbmmidd`
-// once. Idempotent — the installer returns non-zero exit codes when the
-// driver is already present (exit 1 "already installed", exit 2 after an
-// interrupted re-install), so we treat "install succeeded" as "device is
-// actually enumerable in the system" via amyuniDevicePresent().
-// Also cleans up any phantom monitors left from previous crashed helpers.
+// ONCE, gated by a marker file. Marker-only check — no PnP enumeration
+// (that's slow PowerShell and pushes the helper past Obliance's 30s
+// connect timeout on a fresh install).
 func amyuniEnsureInstalled(configDir string) error {
 	bundle := amyuniBundleDir()
 	if bundle == "" {
@@ -73,39 +71,23 @@ func amyuniEnsureInstalled(configDir string) error {
 		return fmt.Errorf("amyuni: mkdir %s: %w", stateDir, err)
 	}
 	marker := filepath.Join(stateDir, amyuniInstalled)
-	markerPresent := false
 	if _, err := os.Stat(marker); err == nil {
-		markerPresent = true
-	}
-	deviceAlready := amyuniDevicePresent()
-
-	if !markerPresent || !deviceAlready {
-		installer := filepath.Join(bundle, "deviceinstaller64.exe")
-		if _, err := os.Stat(installer); err != nil {
-			return fmt.Errorf("amyuni: deviceinstaller64.exe not in bundle")
-		}
-		log.Printf("amyuni: running deviceinstaller64 install usbmmIdd.inf usbmmidd")
-		cmd := exec.Command(installer, "install", "usbmmIdd.inf", "usbmmidd")
-		cmd.Dir = bundle
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		out, _ := cmd.CombinedOutput()
-		log.Printf("amyuni: installer output:\n%s", strings.TrimSpace(string(out)))
+		return nil // fast path: already installed
 	}
 
-	// Verify device is in the system — deviceinstaller64 exit code is
-	// unreliable, check PnP state directly.
-	if !amyuniDevicePresent() {
-		return fmt.Errorf("amyuni: install ran but no usbmmidd device present")
+	installer := filepath.Join(bundle, "deviceinstaller64.exe")
+	if _, err := os.Stat(installer); err != nil {
+		return fmt.Errorf("amyuni: deviceinstaller64.exe not in bundle")
 	}
-
-	// Cleanup: remove every phantom monitor from previous helpers that
-	// crashed before their deferred unplug. enableidd 0 removes one at a
-	// time; loop until no more exist, cap to avoid infinite loop if
-	// something goes wrong.
-	amyuniUnplugAll()
+	log.Printf("amyuni: running deviceinstaller64 install usbmmIdd.inf usbmmidd")
+	cmd := exec.Command(installer, "install", "usbmmIdd.inf", "usbmmidd")
+	cmd.Dir = bundle
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, _ := cmd.CombinedOutput()
+	log.Printf("amyuni: installer output:\n%s", strings.TrimSpace(string(out)))
 
 	_ = os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0644)
-	log.Printf("amyuni: driver ready, phantom monitors cleared")
+	log.Printf("amyuni: driver ready")
 	return nil
 }
 
@@ -139,14 +121,18 @@ func amyuniActiveMonitorCount() int {
 	return n
 }
 
-// amyuniEnableMonitor ensures exactly ONE Amyuni monitor is plugged, no
-// more no less. Clears any phantoms first (from previous crashed helpers)
-// then plugs one fresh monitor. Keeping count==1 is critical because the
-// capture path captures the whole virtual screen, which grows with each
-// active monitor (800+1920+... = several-K-wide rect) and crashes both the
-// Magnification API and the H.264 encoder at extreme widths.
+// amyuniEnableMonitor plugs one fresh virtual monitor. We call enableidd 0
+// first just once (not a loop) to remove a single stale monitor from a
+// previous crashed helper that may not have run its deferred unplug; then
+// enableidd 1 adds our fresh one. Two deviceinstaller64 calls max ~4s
+// total, safely under Obliance's connect timeout.
+//
+// We intentionally do NOT loop-cleanup before plugging — if we ever see
+// phantom accumulation again, the root cause should be fixed at the
+// crash-recovery level, not by adding N PowerShell probes on every
+// capture start.
 func amyuniEnableMonitor() error {
-	amyuniUnplugAll()
+	_ = amyuniRunEnableIdd("0") // one-shot stale-monitor cleanup (idempotent)
 	return amyuniRunEnableIdd("1")
 }
 
