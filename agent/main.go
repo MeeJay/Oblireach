@@ -190,21 +190,20 @@ func main() {
 	// Write version file so the Obliance tray can read it.
 	_ = os.WriteFile(filepath.Join(configDir, "version.txt"), []byte(agentVersion), 0644)
 
-	// Ensure the Virtual Display Driver is present so headless / pre-login /
-	// RDP-disconnected sessions have a DXGI-capturable output. Failure is
-	// non-fatal — the agent still works for sessions that have a real
-	// rendered display.
-	if err := vddEnsureInstalled(configDir); err != nil {
-		log.Printf("vdd: setup failed: %v", err)
-	}
-
-	// Amyuni usbmmidd (WHQL-signed Microsoft hardware compat publisher):
-	// provides an IDD monitor that can be hot-plugged per capture session.
-	// Primary path for no-user / Winlogon capture — MttVDD's always-on
-	// monitor does not get Winlogon composition on Server 2022/2025.
-	if err := amyuniEnsureInstalled(configDir); err != nil {
-		log.Printf("amyuni: setup failed: %v", err)
-	}
+	// Run driver setup asynchronously — it involves several PowerShell
+	// invocations (Get-PnpDevice enumeration, phantom-monitor cleanup) that
+	// can cumulatively exceed the 30s Windows Service Control Manager
+	// start-timeout if done synchronously on the SCM thread. The main loop
+	// must return from its START_PENDING phase quickly; driver availability
+	// is non-critical for existing user sessions anyway.
+	go func() {
+		if err := vddEnsureInstalled(configDir); err != nil {
+			log.Printf("vdd: setup failed: %v", err)
+		}
+		if err := amyuniEnsureInstalled(configDir); err != nil {
+			log.Printf("amyuni: setup failed: %v", err)
+		}
+	}()
 
 	runFn := func() { runCmdWS(cfg) }
 
