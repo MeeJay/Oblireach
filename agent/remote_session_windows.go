@@ -458,16 +458,23 @@ func runHelperMode(addr string) {
 			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
 			vddMakePrimary()
 		} else {
-			// Disable the MttVDD device: it would otherwise add its 800x600
-			// output to the virtual-screen calculation, combining with
-			// Amyuni's 1920x1080 into a 2720x1080 rect that kills the
-			// Magnification + OpenH264 capture pipeline.
+			// Disable MttVDD so it doesn't pollute the virtual-screen calc
+			// (800x600 + Amyuni 1920x1080 = 2720x1080-wide rect crashes
+			// Magnification + OpenH264).
 			if err := vddDisable(); err != nil {
 				log.Printf("helper: vdd disable failed (non-fatal): %v", err)
 			}
-			// Give Windows a beat to enumerate the hot-plugged monitor
-			// before DXGI/Mag init tries to find it.
+			// Let Windows enumerate the hot-plugged monitor first…
 			time.Sleep(1500 * time.Millisecond)
+			// …then force it to primary. Without this, a physical console
+			// adapter (Hyper-V Video) keeps the primary slot and Windows
+			// composes Winlogon/LogonUI there — Amyuni stays blank and
+			// our capture picks up a black frame. Primary-on-Amyuni is
+			// how RustDesk's working scenario is set up (their headless
+			// clients have no physical adapter competing, ours on Hyper-V
+			// do). Matches `ChangeDisplaySettingsEx … CDS_SET_PRIMARY`.
+			amyuniMakePrimary()
+			time.Sleep(500 * time.Millisecond)
 			defer func() {
 				if err := amyuniDisableMonitor(); err != nil {
 					log.Printf("helper: amyuni disable failed: %v", err)
