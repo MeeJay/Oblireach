@@ -458,29 +458,36 @@ func runHelperMode(addr string) {
 			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
 			vddMakePrimary()
 		} else {
-			// Disable MttVDD so it doesn't pollute the virtual-screen calc
-			// (800x600 + Amyuni 1920x1080 = 2720x1080-wide rect crashes
-			// Magnification + OpenH264).
+			// Disable MttVDD so it doesn't pollute the virtual-screen calc.
 			if err := vddDisable(); err != nil {
 				log.Printf("helper: vdd disable failed (non-fatal): %v", err)
 			}
-			// Let Windows enumerate the hot-plugged monitor first…
+			// Let Windows enumerate the hot-plugged monitor.
 			time.Sleep(1500 * time.Millisecond)
-			// …then force it to primary. Without this, a physical console
-			// adapter (Hyper-V Video) keeps the primary slot and Windows
-			// composes Winlogon/LogonUI there — Amyuni stays blank and
-			// our capture picks up a black frame. Primary-on-Amyuni is
-			// how RustDesk's working scenario is set up (their headless
-			// clients have no physical adapter competing, ours on Hyper-V
-			// do). Matches `ChangeDisplaySettingsEx … CDS_SET_PRIMARY`.
+			// Try to force Amyuni primary. Often fails on Hyper-V VMs
+			// (ChangeDisplaySettingsEx returns DISP_CHANGE_FAILED because
+			// the Hyper-V Video console adapter won't cede the primary
+			// slot) — we attempt it but don't rely on it, since we have
+			// the desktop-switch fallback below.
 			amyuniMakePrimary()
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 			defer func() {
 				if err := amyuniDisableMonitor(); err != nil {
 					log.Printf("helper: amyuni disable failed: %v", err)
 				}
 			}()
 		}
+
+		// Attach this thread to the active input desktop before captureInit
+		// creates the Magnifier windows. On a no-user session the active
+		// desktop is WinSta0\Winlogon (where LogonUI renders the sign-in
+		// prompt). The Magnification API captures whatever is on the
+		// caller thread's desktop — if we stay on WinSta0\Default (where
+		// the process spawns) we capture an empty desktop and get black
+		// frames. Moving here, BEFORE any window is created on this
+		// thread, avoids the ERROR_BUSY that SetThreadDesktop would return
+		// once magnifier/host windows exist on the initial desktop.
+		inputSwitchActiveDesktop()
 	}
 
 	// ── Init capture ─────────────────────────────────────────────────────────
