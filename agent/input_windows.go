@@ -81,6 +81,19 @@ static void send_mouse_button(int button, int down, int screen_w, int screen_h, 
     SendInput(1, &inp, sizeof(INPUT));
 }
 
+// nudge_input_for_display_wake: relative zero-delta mouse move. Produces no
+// visible cursor motion but counts as user input to the display driver,
+// which brings a sleeping Hyper-V Video framebuffer back online. Used
+// alongside SetThreadExecutionState(ES_DISPLAY_REQUIRED) at helper start.
+static void nudge_input_for_display_wake(void) {
+    INPUT inp = {0};
+    inp.type = INPUT_MOUSE;
+    inp.mi.dwFlags = MOUSEEVENTF_MOVE; // relative, no absolute flag, dx=dy=0
+    inp.mi.dx = 0;
+    inp.mi.dy = 0;
+    SendInput(1, &inp, sizeof(INPUT));
+}
+
 // send_mouse_scroll: wheel delta (positive = up, negative = down), scaled by WHEEL_DELTA.
 static void send_mouse_scroll(int delta) {
     INPUT inp = {0};
@@ -592,6 +605,39 @@ func inputUnblock() {
 		C.block_user_input(0)
 		inputIsBlocked = false
 	}
+}
+
+// inputKeepDisplayAwake tells Windows to keep the display powered on for
+// the duration of this process. Required when capturing the console session
+// of a Hyper-V VM (or any physical host whose monitor-timeout power policy
+// has kicked in): DXGI Desktop Duplication against a "sleeping" display
+// returns a blank/stale framebuffer, so the operator sees a never-
+// transitioning "Waiting for agent to connect…" because init is sent but no
+// frame ever decodes. Opening Hyper-V Manager's console window or launching
+// RustDesk had the same wake effect — both hold ES_DISPLAY_REQUIRED.
+//
+// Must be called from a thread in the target session (the helper's thread
+// after spawn is correct). The state persists until the process exits or
+// another SetThreadExecutionState(ES_CONTINUOUS) resets it.
+//
+// Also injects a zero-delta mouse move: some display drivers (Hyper-V
+// Video specifically) need an input event on the wire to bring the
+// framebuffer out of its idle power state, not just a policy flag.
+func inputKeepDisplayAwake() {
+	k32 := syscall.NewLazyDLL("kernel32.dll")
+	proc := k32.NewProc("SetThreadExecutionState")
+	const (
+		esContinuous      = 0x80000000
+		esDisplayRequired = 0x00000002
+		esSystemRequired  = 0x00000001
+	)
+	r1, _, callErr := proc.Call(uintptr(esContinuous | esDisplayRequired | esSystemRequired))
+	logInputEvent(fmt.Sprintf("wake: SetThreadExecutionState → prev=0x%x err=%v", r1, callErr))
+
+	// Zero-delta mouse nudge — brings the Hyper-V Video framebuffer out of
+	// its idle power state when the ES_DISPLAY_REQUIRED flag alone isn't
+	// enough to force rendering.
+	C.nudge_input_for_display_wake()
 }
 
 // inputSwitchActiveDesktop re-attaches the current OS thread to whichever

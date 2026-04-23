@@ -447,6 +447,16 @@ func runHelperMode(addr string) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
+	// Keep the display awake for the whole helper lifetime. On Hyper-V VMs
+	// with no active console viewer, the Hyper-V Video adapter enters an
+	// idle power state where DXGI Desktop Duplication captures a blank
+	// framebuffer — the agent streams "nothing" and the client sits on
+	// "Waiting for agent to connect…". Opening Hyper-V Manager's console
+	// window or launching RustDesk resolves it symptomatically because
+	// both hold ES_DISPLAY_REQUIRED while active. We do the same here, so
+	// the fix is intrinsic to Oblireach.
+	inputKeepDisplayAwake()
+
 	// Log the helper's identity to help diagnose UIPI issues.
 	// SYSTEM token = highest integrity, bypasses UIPI for admin windows.
 	if u, err := os.UserHomeDir(); err == nil {

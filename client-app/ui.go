@@ -341,8 +341,10 @@ let chatId = null;
 let chatMessages = [];
 let chatConnected = false;
 let chatUserClosed = false;
+let currentOperatorId = null;
 let currentOperatorName = '';
 let currentOperatorAvatar = '';
+let currentTenantId = null;
 let chatTypingTimer = null;
 let lastChatTypingEmit = 0;
 
@@ -485,14 +487,18 @@ async function enterApp() {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
 
-  // Get current user info for chat
+  // Get current user info for chat — /api/auth/me returns
+  // { data: { user, permissions, currentTenantId } }
   try {
     const r = await api('GET', '/api/auth/me');
     if (r.ok) {
       const d = await r.json();
-      const u = d.data || d.user || d;
+      const payload = d.data || d;
+      const u = payload.user || payload;
+      currentOperatorId = u.id ?? null;
       currentOperatorName = u.displayName || u.display_name || u.username || 'Operator';
       currentOperatorAvatar = u.profilePicture || u.profile_picture || u.avatar || '';
+      currentTenantId = payload.currentTenantId ?? u.currentTenantId ?? null;
       // Update chat header avatar
       if (currentOperatorAvatar) {
         const hdrAvatar = document.querySelector('.chat-header .avatar');
@@ -501,16 +507,6 @@ async function enterApp() {
       // Update chat header name
       const hdrName = document.querySelector('.chat-header .info .name');
       if (hdrName) hdrName.textContent = currentOperatorName;
-    }
-  } catch {}
-
-  // Select first tenant
-  try {
-    const r = await api('GET', '/api/tenants');
-    const data = await r.json();
-    const tenants = data.tenants || data.data?.tenants || data;
-    if (Array.isArray(tenants) && tenants.length > 0) {
-      await api('POST', '/api/tenant/' + tenants[0].id + '/select');
     }
   } catch {}
 
@@ -967,9 +963,21 @@ async function startRemote(wtsSessionId) {
     const body = { deviceId: selectedDevice.id, protocol: 'oblireach' };
     if (wtsSessionId !== undefined) body.sessionId = wtsSessionId;
     const r = await api('POST', '/api/remote/sessions', body);
-    const d = await r.json();
-    const session = d.data;
-    if (!session?.sessionToken) throw new Error('No session token');
+    let d = null;
+    try { d = await r.json(); } catch {}
+    // Non-2xx — surface the server's error message
+    if (!r.ok) {
+      if (r.status === 401 && d?.twoFactorRequired) {
+        throw new Error('2FA code required to start a remote session');
+      }
+      throw new Error(d?.error || ('HTTP ' + r.status));
+    }
+    // 202 — pending approval (restriction matrix)
+    if (r.status === 202 || d?.data?.status === 'pending_approval') {
+      throw new Error('Remote session pending approval (check the Approvals page)');
+    }
+    const session = d?.data;
+    if (!session?.sessionToken) throw new Error('Server returned no session token');
     if (statusEl) statusEl.textContent = 'Connecting...';
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host + '/proxy/api/remote/tunnel/' + session.sessionToken);
@@ -1545,8 +1553,20 @@ function initSocketIO() {
   s.src = '/proxy/socket.io/socket.io.js';
   s.onload = () => {
     if (!window.io) return;
-    chatSocket = io({ path: '/proxy/socket.io', transports: ['polling', 'websocket'] });
+    // Obliance server requires handshake.auth.{userId, tenantId} — see socket.ts.
+    // Session cookies alone are not sufficient; the socket.io middleware only
+    // reads the auth payload.
+    if (!currentOperatorId) {
+      console.warn('socket.io: no user id yet, chat will not work');
+      return;
+    }
+    chatSocket = io({
+      path: '/proxy/socket.io',
+      transports: ['polling', 'websocket'],
+      auth: { userId: currentOperatorId, tenantId: currentTenantId },
+    });
     chatSocket.on('connect', () => { console.log('socket.io connected'); });
+    chatSocket.on('connect_error', (err) => { console.warn('socket.io connect_error:', err?.message || err); });
     chatSocket.on('chat:message', onChatMessage);
     chatSocket.on('chat:closed', onChatClosed);
     chatSocket.on('chat:remote_response', onChatRemoteResponse);
