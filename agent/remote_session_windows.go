@@ -277,6 +277,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -362,6 +364,21 @@ func pipeSend(w io.Writer, msgType byte, payload []byte) error {
 	return nil
 }
 
+// pipeSendLocked serialises pipeSend across concurrent writers. pipeSend does
+// TWO Write() calls (header, then payload). Go's net.Conn.Write is atomic per
+// call, but the runtime does NOT prevent inter-call interleaving — so two
+// goroutines calling pipeSend concurrently can produce the sequence
+// [A.hdr, B.hdr, A.payload, B.payload] which corrupts the framing. Observed
+// in 1.0.178 after moving input dispatch (and its SAS pipeSend) onto its own
+// goroutine: a pipeTypeSAS could slot between the header and payload of a
+// large H.264 frame, and the service's pipeRecv would consume the frame's
+// payload as if it were the SAS message's body.
+func pipeSendLocked(mu *sync.Mutex, w io.Writer, msgType byte, payload []byte) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return pipeSend(w, msgType, payload)
+}
+
 func pipeRecv(r io.Reader) (msgType byte, payload []byte, err error) {
 	hdr := make([]byte, 5)
 	if _, err = io.ReadFull(r, hdr); err != nil {
@@ -431,13 +448,22 @@ func runHelperMode(addr string) {
 	}
 	defer conn.Close()
 
+	// Mutex serialising all writes to conn. pipeSend does 2 Writes (header,
+	// payload) and Go's net.Conn doesn't prevent inter-call interleaving
+	// between goroutines. See pipeSendLocked doc comment for the corruption
+	// pattern that broke CAD in 1.0.178.
+	var helperPipeMu sync.Mutex
+	pipeSendC := func(msgType byte, payload []byte) error {
+		return pipeSendLocked(&helperPipeMu, conn, msgType, payload)
+	}
+
 	// Route Ctrl+Alt+Del back to the service. SendSAS from here (Session N,
 	// SYSTEM token) returns TRUE but the secure desktop never appears —
 	// Windows requires the call from Session 0. The service (SCM-launched,
 	// LocalSystem, Session 0) handles pipeTypeSAS by invoking inputSAS()
 	// directly. Same IPC pattern as RustDesk's ipc::Data::SAS.
 	inputSASHook = func() {
-		if err := pipeSend(conn, pipeTypeSAS, nil); err != nil {
+		if err := pipeSendC(pipeTypeSAS, nil); err != nil {
 			log.Printf("helper: failed to pipe SAS request to service: %v", err)
 		}
 	}
@@ -539,7 +565,7 @@ func runHelperMode(addr string) {
 		"audioAvail": audioInitDone,
 	}
 	initJSON, _ := json.Marshal(initMsg)
-	if err := pipeSend(conn, pipeTypeInit, initJSON); err != nil {
+	if err := pipeSendC(pipeTypeInit, initJSON); err != nil {
 		log.Fatalf("helper: send init failed: %v", err)
 	}
 	log.Printf("helper: streaming %dx%d@%dfps", w, h, fps)
@@ -591,7 +617,10 @@ func runHelperMode(addr string) {
 						continue
 					}
 				}
-				select { case inputCh <- payload: default: }
+				// Blocking send — the dedicated dispatch goroutine drains this
+				// fast (~1ms per input). Previous non-blocking send silently
+				// dropped keystrokes when the main loop was busy with a frame.
+				inputCh <- payload
 			case pipeTypeStop:
 				close(stopCh)
 				return
@@ -612,12 +641,30 @@ func runHelperMode(addr string) {
 				case <-ticker.C:
 					data := audioCapture()
 					if len(data) > 0 {
-						_ = pipeSend(conn, pipeTypeAudioData, data)
+						_ = pipeSendC(pipeTypeAudioData, data)
 					}
 				}
 			}
 		}()
 	}
+
+	// ── Dedicated input-dispatch goroutine ────────────────────────────────────
+	// The main capture loop spends 30-60ms per frame on high-res multi-monitor
+	// sessions (e.g. 2552×1348 RDP spanned). With inputs in the same select,
+	// operator keystrokes pile up behind a frame in flight — user-observed lag
+	// was 3-4s on RDP targets even though each rx→SendInput is <2ms. Running
+	// input dispatch on its own thread (LockOSThread so SetThreadDesktop is
+	// per-thread stable) removes the contention.
+	var screenW, screenH atomic.Int32
+	screenW.Store(int32(w))
+	screenH.Store(int32(h))
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		for payload := range inputCh {
+			dispatchInputJSON(payload, int(screenW.Load()), int(screenH.Load()))
+		}
+	}()
 
 	// ── Capture/encode/send loop ──────────────────────────────────────────────
 	bgraBuf := make([]byte, w*h*4)
@@ -641,13 +688,7 @@ func runHelperMode(addr string) {
 		case block := <-blockCh:
 			inputBlock(block)
 			confirm, _ := json.Marshal(map[string]interface{}{"type": "input_block_status", "blocked": block})
-			_ = pipeSend(conn, pipeTypeControl, confirm)
-
-		case payload, ok := <-inputCh:
-			if !ok {
-				return
-			}
-			dispatchInputJSON(payload, w, h)
+			_ = pipeSendC(pipeTypeControl, confirm)
 
 		case newIdx := <-monitorCh:
 			log.Printf("helper: monitor switch to %d", newIdx)
@@ -668,6 +709,8 @@ func runHelperMode(addr string) {
 			bgraBuf = make([]byte, w*h*4)
 			monOffX, monOffY = captureMonitorOffset()
 			setInputMonitorOffset(monOffX, monOffY)
+			screenW.Store(int32(w))
+			screenH.Store(int32(h))
 
 			if openH264Available() {
 				if err := openH264Init(w, h, fps, bitrate); err == nil {
@@ -681,7 +724,7 @@ func runHelperMode(addr string) {
 				"fps": fps, "codec": "h264", "monitors": enumerateMonitors(),
 			}
 			reInitJSON, _ := json.Marshal(reInit)
-			_ = pipeSend(conn, pipeTypeInit, reInitJSON)
+			_ = pipeSendC(pipeTypeInit, reInitJSON)
 
 		case newCodec := <-codecCh:
 			log.Printf("helper: codec switch requested: %s", newCodec)
@@ -722,7 +765,7 @@ func runHelperMode(addr string) {
 			log.Printf("helper: switched to %s", newCodec)
 			// Send codec_switch confirmation to service (→ browser)
 			switchJSON, _ := json.Marshal(map[string]string{"type": "codec_switch", "codec": newCodec})
-			_ = pipeSend(conn, pipeTypeControl, switchJSON)
+			_ = pipeSendC(pipeTypeControl, switchJSON)
 
 		case <-frameTicker.C:
 			fw, fh, err := captureFrame(bgraBuf)
@@ -745,24 +788,24 @@ func runHelperMode(addr string) {
 				if err != nil {
 					continue
 				}
-				if err := pipeSend(conn, pipeTypeJPEGFrame, jpegData); err != nil {
+				if err := pipeSendC(pipeTypeJPEGFrame, jpegData); err != nil {
 					return
 				}
 			} else if useAV1 {
 				av1Data, err := av1EncodeFrame(bgraBuf, w, h)
 				if err != nil { continue }
 				if len(av1Data) == 0 { continue }
-				if err := pipeSend(conn, pipeTypeAV1Frame, av1Data); err != nil { return }
+				if err := pipeSendC(pipeTypeAV1Frame, av1Data); err != nil { return }
 			} else if useH265 {
 				h265Data, err := h265EncodeFrame(bgraBuf, w, h)
 				if err != nil { continue }
 				if len(h265Data) == 0 { continue }
-				if err := pipeSend(conn, pipeTypeH265Frame, h265Data); err != nil { return }
+				if err := pipeSendC(pipeTypeH265Frame, h265Data); err != nil { return }
 			} else if useVP9 {
 				vp9Data, err := vp9EncodeFrame(bgraBuf, w, h)
 				if err != nil { continue }
 				if len(vp9Data) == 0 { continue }
-				if err := pipeSend(conn, pipeTypeVP9Frame, vp9Data); err != nil { return }
+				if err := pipeSendC(pipeTypeVP9Frame, vp9Data); err != nil { return }
 			} else if useOpenH264 {
 				nalUnits, err := openH264EncodeFrame(bgraBuf, w, h, tsMs)
 				tsMs += int64(1000 / fps)
@@ -773,7 +816,7 @@ func runHelperMode(addr string) {
 				if len(nalUnits) == 0 {
 					continue
 				}
-				if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
+				if err := pipeSendC(pipeTypeFrame, nalUnits); err != nil {
 					return
 				}
 			} else {
@@ -790,7 +833,7 @@ func runHelperMode(addr string) {
 					}
 					continue
 				}
-				if err := pipeSend(conn, pipeTypeFrame, nalUnits); err != nil {
+				if err := pipeSendC(pipeTypeFrame, nalUnits); err != nil {
 					return
 				}
 			}
@@ -910,6 +953,15 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 	_ = json.Unmarshal(initPayload, &initInfo)
 	log.Printf("Stream %s (cross-session): started %dx%d", s.token, initInfo.Width, initInfo.Height)
 
+	// Mutex serialising writes to the helper pipe (browser→helper input
+	// goroutine + stop signal + adaptive-bitrate command from the frame-
+	// forwarding loop). See pipeSendLocked for the interleaving bug this
+	// guards against.
+	var servicePipeMu sync.Mutex
+	pipeSendH := func(msgType byte, payload []byte) error {
+		return pipeSendLocked(&servicePipeMu, conn, msgType, payload)
+	}
+
 	// Keepalive pings to the browser.
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
@@ -941,7 +993,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			case 0x9: // ping
 				_ = s.ws.SendPong(payload)
 			case 0x1: // JSON input
-				_ = pipeSend(conn, pipeTypeInput, payload)
+				_ = pipeSendH(pipeTypeInput, payload)
 			}
 		}
 	}()
@@ -951,7 +1003,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 	for {
 		select {
 		case <-s.stopCh:
-			_ = pipeSend(conn, pipeTypeStop, nil)
+			_ = pipeSendH(pipeTypeStop, nil)
 			return
 		default:
 		}
@@ -1008,7 +1060,7 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 			if newBr := ab.report(time.Since(sendStart)); newBr > 0 {
 				// Tell helper to adjust bitrate
 				brCmd, _ := json.Marshal(map[string]interface{}{"type": "set_bitrate", "bitrate": newBr})
-				_ = pipeSend(conn, pipeTypeInput, brCmd)
+				_ = pipeSendH(pipeTypeInput, brCmd)
 				// Tell browser the new bitrate
 				brMsg, _ := json.Marshal(map[string]interface{}{"type": "bitrate", "bitrate": newBr})
 				_ = s.ws.WriteFrame(0x1, brMsg)

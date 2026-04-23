@@ -112,8 +112,16 @@ static void send_key(int vk, int down) {
     inp.ki.wVk = (WORD)vk;
     if (!down) inp.ki.dwFlags = KEYEVENTF_KEYUP;
     UINT sent = SendInput(1, &inp, sizeof(INPUT));
-    inputLog("send_key: vk=0x%02x down=%d sent=%u err=%lu",
-        vk, down, sent, sent ? 0 : GetLastError());
+    // Throttle logging: one line in 50 is enough to detect "SendInput broken"
+    // regressions; per-key fopen/fflush/fclose on fast typing (200+ wpm) was
+    // a measurable bottleneck on slow Server disks + AV scanning.
+    static int key_log_count = 0;
+    int is_err = (sent == 0);
+    if (is_err || key_log_count < 5 || key_log_count % 50 == 0) {
+        inputLog("send_key: vk=0x%02x down=%d sent=%u err=%lu",
+            vk, down, sent, is_err ? GetLastError() : 0);
+    }
+    key_log_count++;
 }
 
 // switch_to_active_desktop: ensures the current thread is attached to the
@@ -126,6 +134,14 @@ static void send_key(int vk, int down) {
 // introduced when capture + input were split onto separate goroutines.
 static __thread HDESK t_currentDesk = NULL;
 static __thread DWORD t_deskCheckTime = 0;
+// Desktop name of the last successfully-observed input desktop. OpenInputDesktop
+// returns a NEW handle on each call, so the previous `t_currentDesk != inputDesk`
+// check was always true and forced a SetThreadDesktop on every 500ms tick —
+// which always fails with ERROR_BUSY (170) because Go's runtime has created
+// windows on this thread. Result: 500ms-ly syscall storm + fopen/fwrite log
+// spam + zero actual desktop change. Now we cache the NAME; if it matches the
+// last attached desktop, we short-circuit.
+static __thread char t_currentDeskName[128] = {0};
 
 // Legacy global (still read by force_switch_active_desktop for backward
 // compatibility), but no longer authoritative — the per-thread state is.
@@ -133,7 +149,7 @@ static HDESK g_currentDesk = NULL;
 
 static void switch_to_active_desktop(void) {
     DWORD now = GetTickCount();
-    if (now - t_deskCheckTime < 500 && t_currentDesk != NULL) return;
+    if (now - t_deskCheckTime < 500 && t_currentDeskName[0] != 0) return;
     t_deskCheckTime = now;
 
     // Try to open the input desktop (the one receiving user input right now).
@@ -157,18 +173,26 @@ static void switch_to_active_desktop(void) {
     DWORD needed = 0;
     GetUserObjectInformationA(inputDesk, UOI_NAME, name, sizeof(name), &needed);
 
-    // Per-thread attachment: SetThreadDesktop moves THIS thread's desktop.
-    if (t_currentDesk != inputDesk) {
-        BOOL ok = SetThreadDesktop(inputDesk);
-        DWORD setErr = ok ? 0 : GetLastError();
-        if (t_currentDesk) CloseDesktop(t_currentDesk);
-        t_currentDesk = inputDesk;
-        g_currentDesk = inputDesk; // mirror for diagnostics
-        inputLog("switch_desk: attached to '%s' (SetThreadDesktop ok=%d err=%lu)",
-            name, ok, setErr);
-    } else {
+    // If the desktop name hasn't changed since the last attach, bail out —
+    // SetThreadDesktop would just fail with ERROR_BUSY anyway, and SendInput
+    // already targets the thread's current desktop.
+    if (strncmp(name, t_currentDeskName, sizeof(t_currentDeskName)) == 0) {
         CloseDesktop(inputDesk);
+        return;
     }
+
+    // Desktop actually changed (e.g. Default ↔ Winlogon on CAD, UAC prompt,
+    // or lock transition). Attempt the per-thread attach and record the
+    // new name even if SetThreadDesktop fails — we've at least observed it.
+    BOOL ok = SetThreadDesktop(inputDesk);
+    DWORD setErr = ok ? 0 : GetLastError();
+    if (t_currentDesk) CloseDesktop(t_currentDesk);
+    t_currentDesk = inputDesk;
+    g_currentDesk = inputDesk; // mirror for diagnostics
+    strncpy(t_currentDeskName, name, sizeof(t_currentDeskName) - 1);
+    t_currentDeskName[sizeof(t_currentDeskName) - 1] = 0;
+    inputLog("switch_desk: attached to '%s' (SetThreadDesktop ok=%d err=%lu)",
+        name, ok, setErr);
 }
 
 // force_switch_active_desktop: bypasses the 500ms cache and re-attaches the
@@ -176,6 +200,7 @@ static void switch_to_active_desktop(void) {
 // from different goroutines can't stomp each other's cached view.
 static void force_switch_active_desktop(void) {
     t_deskCheckTime = 0;
+    t_currentDeskName[0] = 0; // force cache miss on name match too
     switch_to_active_desktop();
 }
 

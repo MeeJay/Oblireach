@@ -216,6 +216,173 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 /* ── Zoom viewport ── */
 .remote-viewport.zoom-scroll{overflow:auto}
 .remote-viewport.zoom-scroll #remote-canvas{object-fit:unset}
+
+/* ── Generic modal (2FA prompt, confirmation dialogs, etc.) ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(6px);z-index:300;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.visible{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--border2);border-radius:18px;padding:22px 24px;width:420px;max-width:100%%;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.modal-head{display:flex;align-items:center;gap:10px}
+.modal-head .icon{width:36px;height:36px;border-radius:10px;background:rgba(194,0,27,.15);color:var(--accent-l);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.modal-head h3{font-size:15px;font-weight:600;color:var(--text)}
+.modal-head .close{margin-left:auto;width:28px;height:28px;border-radius:8px;background:transparent;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.modal-head .close:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.modal-box p.desc{font-size:12px;color:var(--muted);line-height:1.5}
+.otp-input{background:var(--input-bg);border:1px solid var(--input-border);border-radius:12px;padding:14px 16px;font-size:22px;font-family:monospace;color:var(--text);letter-spacing:10px;text-align:center;outline:none;transition:border-color .15s;width:100%%}
+.otp-input:focus{border-color:var(--accent)}
+.trust-row{display:flex;align-items:flex-start;gap:10px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:12px;padding:10px 12px;cursor:pointer}
+.trust-row input{accent-color:var(--accent);margin-top:2px;flex-shrink:0;width:14px;height:14px;cursor:pointer}
+.trust-row .labels{display:flex;flex-direction:column;gap:3px;min-width:0}
+.trust-row .labels .title{font-size:12px;color:var(--text);font-weight:500}
+.trust-row .labels .sub{font-size:11px;color:var(--muted2);line-height:1.4}
+.trust-row .labels .ip{font-family:monospace;color:var(--muted);font-size:11px}
+.modal-err{font-size:11px;color:var(--danger);min-height:14px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end}
+.btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:10px;padding:8px 14px;font-size:12px;cursor:pointer;transition:all .15s}
+.btn-ghost:hover{color:var(--text);border-color:var(--border2);background:rgba(255,255,255,.04)}
+
+/* ── Nav rail (left vertical navigation, Rustdesk-console style) ── */
+.nav-rail{width:220px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg2);padding:8px 0;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 14px;margin:1px 8px;border-radius:8px;cursor:pointer;color:var(--muted);font-size:12px;transition:all .1s;user-select:none}
+.nav-item:hover{background:rgba(255,255,255,.04);color:var(--text)}
+.nav-item.active{background:rgba(194,0,27,.12);color:var(--accent-l)}
+.nav-item svg{flex-shrink:0;opacity:.75}
+.nav-item.active svg{opacity:1}
+.nav-item .chev{margin-left:auto;opacity:.5;transition:transform .15s}
+.nav-item.expanded .chev{transform:rotate(90deg)}
+.nav-sub{padding:1px 0 3px 0;display:none}
+.nav-sub.open{display:block}
+.nav-sub .nav-item{padding-left:40px;font-size:12px;color:var(--muted2)}
+.nav-sub .nav-item.active{color:var(--accent-l);background:rgba(194,0,27,.08)}
+.nav-group-label{padding:12px 18px 4px;font-size:9.5px;font-weight:700;color:var(--muted2);text-transform:uppercase;letter-spacing:1px}
+.nav-item .count-pill{margin-left:auto;font-size:10px;font-weight:600;background:rgba(255,255,255,.06);color:var(--muted);padding:1px 6px;border-radius:8px}
+.nav-item.active .count-pill{background:rgba(194,0,27,.18);color:var(--accent-l)}
+
+/* ── Page frame ── */
+.page-frame{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);min-width:0}
+.page{flex:1;display:none;flex-direction:column;overflow:hidden;min-width:0}
+.page.active{display:flex}
+.page-header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg2)}
+.page-header h1{font-size:17px;font-weight:600;color:var(--text)}
+.page-header .breadcrumb{font-size:12px;color:var(--muted)}
+.page-header .breadcrumb span.sep{margin:0 6px;color:var(--muted2)}
+.page-header .page-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.page-body{flex:1;overflow:auto;padding:20px 24px}
+.page-body.flush{padding:0}
+
+/* ── Top bar widgets: tenant switcher + user menu ── */
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.tenant-switcher{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:10px;border:1px solid var(--border2);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;cursor:pointer;position:relative;max-width:240px}
+.tenant-switcher:hover{background:rgba(255,255,255,.06)}
+.tenant-switcher .label{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tenant-switcher .chev{opacity:.6}
+.tenant-menu{position:absolute;top:calc(100%% + 4px);left:0;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:4px;min-width:240px;z-index:60;box-shadow:0 12px 30px rgba(0,0,0,.5);display:none;max-height:360px;overflow-y:auto}
+.tenant-menu.open{display:block}
+.tenant-menu-item{padding:8px 12px;border-radius:8px;font-size:12px;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.tenant-menu-item:hover{background:rgba(255,255,255,.06)}
+.tenant-menu-item.active{color:var(--accent-l);background:rgba(194,0,27,.1)}
+.user-menu-trigger{display:flex;align-items:center;gap:8px;padding:3px 10px 3px 3px;border-radius:20px;border:1px solid var(--border2);background:rgba(255,255,255,.03);color:var(--text);font-size:12px;cursor:pointer;position:relative}
+.user-menu-trigger:hover{background:rgba(255,255,255,.06)}
+.user-menu-trigger .avatar-sm{width:26px;height:26px;border-radius:50%%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;font-size:10px;color:white;overflow:hidden}
+.user-menu-trigger .avatar-sm img{width:100%%;height:100%%;object-fit:cover}
+.user-menu-trigger .uname{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-menu{position:absolute;top:calc(100%% + 4px);right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:6px;min-width:220px;z-index:60;box-shadow:0 12px 30px rgba(0,0,0,.5);display:none}
+.user-menu.open{display:block}
+.user-menu-head{padding:10px 12px;border-bottom:1px solid var(--border);margin-bottom:4px}
+.user-menu-head .name{font-size:13px;color:var(--text);font-weight:600}
+.user-menu-head .sub{font-size:11px;color:var(--muted);margin-top:2px;word-break:break-all}
+.user-menu-item{padding:8px 12px;border-radius:7px;font-size:12px;color:var(--text);cursor:pointer;display:flex;align-items:center;gap:8px}
+.user-menu-item:hover{background:rgba(255,255,255,.06)}
+.user-menu-item.danger{color:var(--danger)}
+.user-menu-item.danger:hover{background:rgba(239,68,68,.08)}
+.user-menu-item svg{opacity:.7;flex-shrink:0}
+
+/* ── KPI cards ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:24px}
+.kpi-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden}
+.kpi-card .label{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700}
+.kpi-card .value{font-size:28px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi-card.online .value{color:var(--success)}
+.kpi-card.offline .value{color:var(--muted)}
+.kpi-card.warn .value{color:var(--warn)}
+.kpi-card.danger .value{color:var(--danger)}
+.kpi-card .sub{font-size:11px;color:var(--muted2);margin-top:2px}
+.kpi-card .ico{position:absolute;top:14px;right:14px;opacity:.15;color:var(--text)}
+
+/* ── Generic panel ── */
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px}
+.panel-header{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--text)}
+.panel-header .panel-actions{margin-left:auto;display:flex;gap:6px}
+.panel-body{padding:14px 18px}
+.panel-body.flush{padding:0}
+
+/* ── Data table ── */
+.dt{width:100%%;border-collapse:collapse;font-size:12px}
+.dt th{text-align:left;padding:10px 14px;font-size:10.5px;font-weight:700;color:var(--muted);background:var(--bg3);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--border);white-space:nowrap}
+.dt td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle}
+.dt tbody tr{transition:background .1s;cursor:pointer}
+.dt tbody tr:hover td{background:rgba(255,255,255,.02)}
+.dt tbody tr.selected td{background:rgba(194,0,27,.06)}
+.dt tr:last-child td{border-bottom:none}
+.dt .actions{display:flex;gap:6px;justify-content:flex-end}
+.dt .cell-hostname{display:flex;align-items:center;gap:8px;font-weight:500}
+.dt .icon-btn{width:26px;height:26px;border-radius:7px;background:transparent;border:none;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .1s}
+.dt .icon-btn:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.dt .icon-btn.primary:hover{color:var(--accent-l)}
+.dt .icon-btn:disabled{opacity:.25;cursor:default}
+.dt .icon-btn:disabled:hover{background:transparent;color:var(--muted)}
+
+/* ── Tag chips ── */
+.tag-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.tag-chip.win{background:rgba(96,165,250,.12);color:#60a5fa;border-color:rgba(96,165,250,.2)}
+.tag-chip.linux{background:rgba(74,222,128,.12);color:#4ade80;border-color:rgba(74,222,128,.2)}
+.tag-chip.mac{background:rgba(251,191,36,.12);color:#fbbf24;border-color:rgba(251,191,36,.2)}
+.tag-chip.on{background:rgba(74,222,128,.12);color:#4ade80}
+.tag-chip.off{background:rgba(255,255,255,.04);color:var(--muted2);border-color:rgba(255,255,255,.06)}
+.tag-chip.warn{background:rgba(245,158,11,.12);color:#f59e0b}
+
+/* ── Filter bar ── */
+.filter-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:14px}
+.filter-bar input, .filter-bar select{background:var(--input-bg);border:1px solid var(--input-border);border-radius:10px;padding:6px 10px;font-size:12px;color:var(--text);outline:none;min-width:140px}
+.filter-bar input:focus, .filter-bar select:focus{border-color:var(--accent)}
+.filter-bar label{font-size:11px;color:var(--muted);margin-right:2px;white-space:nowrap}
+.filter-bar .spacer{flex:1}
+
+/* ── Recent list ── */
+.recent-list{display:flex;flex-direction:column}
+.recent-item{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12px;cursor:pointer;transition:background .1s}
+.recent-item:hover{background:rgba(255,255,255,.02)}
+.recent-item:last-child{border-bottom:none}
+.recent-item .rname{font-weight:500;color:var(--text)}
+.recent-item .rwhen{margin-left:auto;font-size:11px;color:var(--muted2)}
+.recent-empty{padding:20px;text-align:center;color:var(--muted2);font-size:12px}
+
+/* ── Settings sub-nav ── */
+.settings-layout{display:flex;gap:18px;height:100%%}
+.settings-nav{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:2px}
+.settings-nav-item{padding:8px 12px;border-radius:8px;font-size:12px;color:var(--muted);cursor:pointer;transition:all .1s}
+.settings-nav-item:hover{background:rgba(255,255,255,.04);color:var(--text)}
+.settings-nav-item.active{background:rgba(194,0,27,.12);color:var(--accent-l);font-weight:500}
+.settings-body{flex:1;min-width:0}
+
+/* ── Settings form rows ── */
+.setting-row{display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--border)}
+.setting-row:last-child{border-bottom:none}
+.setting-row .setting-label{flex:1;min-width:0}
+.setting-row .setting-label .title{font-size:13px;font-weight:500;color:var(--text)}
+.setting-row .setting-label .sub{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
+.setting-row .setting-control{flex-shrink:0}
+
+/* ── Trusted IP row ── */
+.tip-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;background:var(--bg3)}
+.tip-row .ipv{font-family:monospace;font-size:12px;color:var(--text);font-weight:500}
+.tip-row .exp{font-size:11px;color:var(--muted)}
+.tip-row .spacer{flex:1}
+.tip-row button{font-size:11px}
+
+/* ── Shared bits ── */
+.hide{display:none !important}
+.section-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
+.muted-hint{font-size:11px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -256,34 +423,47 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 <div id="app" style="display:none;flex-direction:column;height:100%%">
   <div class="topbar">
     <span class="logo" id="topbar-logo"></span>
-    <span class="server-info" id="top-server"></span>
-    <button class="btn-sm chat-toggle" id="btn-chat" style="display:none" title="Chat">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-      Chat
-      <span class="badge-dot" id="chat-badge"></span>
-    </button>
-    <button class="btn-sm" id="btn-refresh" title="Refresh">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-    </button>
-    <button class="btn-sm" id="btn-logout">Sign out</button>
-  </div>
-  <div class="main">
-    <div class="sidebar">
-      <div class="sidebar-head">
-        <input id="search-input" type="text" placeholder="Search devices..."/>
-      </div>
-      <div class="sidebar-body" id="device-tree"></div>
+    <div class="tenant-switcher" id="tenant-switcher" style="display:none" title="Switch tenant">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>
+      <span class="label" id="tenant-label">—</span>
+      <svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+      <div class="tenant-menu" id="tenant-menu"></div>
     </div>
-    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-      <div class="session-tabs" id="session-tabs"></div>
-      <div class="content" id="content-area">
-        <div class="empty">
-          <div class="empty-icon">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.3"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <span class="topbar-right">
+      <button class="btn-sm chat-toggle" id="btn-chat" style="display:none" title="Chat">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        Chat
+        <span class="badge-dot" id="chat-badge"></span>
+      </button>
+      <button class="btn-sm" id="btn-refresh" title="Refresh">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+      </button>
+      <div class="user-menu-trigger" id="user-menu-trigger">
+        <span class="avatar-sm" id="user-avatar-sm">?</span>
+        <span class="uname" id="user-name-top">User</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="opacity:.6"><polyline points="6 9 12 15 18 9"/></svg>
+        <div class="user-menu" id="user-menu">
+          <div class="user-menu-head">
+            <div class="name" id="user-menu-name">—</div>
+            <div class="sub" id="user-menu-sub">—</div>
           </div>
-          <span>Select a device from the list</span>
+          <div class="user-menu-item" id="user-menu-settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            Settings
+          </div>
+          <div class="user-menu-item danger" id="user-menu-logout">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Sign out
+          </div>
         </div>
       </div>
+    </span>
+  </div>
+  <div class="main">
+    <div class="nav-rail" id="nav-rail"></div>
+    <div class="page-frame">
+      <div class="session-tabs" id="session-tabs"></div>
+      <div class="page active" id="page-content"></div>
     </div>
     <!-- Chat panel -->
     <div class="chat-panel" id="chat-panel">
@@ -320,6 +500,35 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
     </div>
   </div>
   <div class="status-bar" id="status-bar">Ready</div>
+</div>
+
+<!-- 2FA prompt modal -->
+<div class="modal-overlay" id="tfa-overlay">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div class="icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <h3>Sensitive action</h3>
+      <button class="close" id="tfa-cancel" title="Cancel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <p class="desc"><span id="tfa-action">This action</span> is marked sensitive by your tenant admin. Enter your 6-digit authenticator code to continue.</p>
+    <input id="tfa-code" class="otp-input" type="text" inputmode="numeric" placeholder="000000" autocomplete="one-time-code"/>
+    <label class="trust-row">
+      <input type="checkbox" id="tfa-trust"/>
+      <div class="labels">
+        <span class="title">Trust this IP for 24 hours</span>
+        <span class="sub">Skip this prompt for sensitive actions from <span class="ip" id="tfa-ip">this IP</span>. Revocable any time from Settings.</span>
+      </div>
+    </label>
+    <div class="modal-err" id="tfa-error"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="tfa-cancel2">Cancel</button>
+      <button class="btn-primary" id="tfa-submit" style="padding:8px 18px;font-size:12px;border-radius:10px" disabled>Verify</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -385,9 +594,69 @@ let activeSessionTabId = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
+  return await _apiWithTfa(method, path, body, false);
+}
+async function _apiWithTfa(method, path, body, retried) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  return await fetch('/proxy' + path, opts);
+  const resp = await fetch('/proxy' + path, opts);
+  if (resp.status !== 401 || retried) return resp;
+  // Peek at body — use clone so the caller can still read it if we don't retry.
+  let parsed = null;
+  try { parsed = await resp.clone().json(); } catch { return resp; }
+  if (!parsed?.twoFactorRequired) return resp;
+  const tfa = await awaitTwoFactorCode(parsed.action || 'This action', parsed.currentIp || '');
+  if (!tfa) return resp; // User cancelled — propagate the original 401.
+  const merged = Object.assign({}, body || {}, { twoFactorCode: tfa.code });
+  if (tfa.trustIp) merged.trustIp = true;
+  return _apiWithTfa(method, path, merged, true);
+}
+
+// Prompt for a 6-digit TOTP code. Resolves to { code, trustIp } on submit, null on cancel.
+// Mirrors D:/Obliance/client/src/components/common/TwoFactorPromptModal.tsx.
+function awaitTwoFactorCode(actionLabel, currentIp) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('tfa-overlay');
+    const input = document.getElementById('tfa-code');
+    const trust = document.getElementById('tfa-trust');
+    const ipEl = document.getElementById('tfa-ip');
+    const actionEl = document.getElementById('tfa-action');
+    const errEl = document.getElementById('tfa-error');
+    const submitBtn = document.getElementById('tfa-submit');
+    const cancelBtn = document.getElementById('tfa-cancel');
+    const cancelBtn2 = document.getElementById('tfa-cancel2');
+
+    input.value = ''; trust.checked = false; errEl.textContent = '';
+    ipEl.textContent = currentIp || 'this IP';
+    actionEl.textContent = actionLabel;
+    submitBtn.disabled = true;
+
+    const done = (result) => {
+      overlay.classList.remove('visible');
+      submitBtn.onclick = null;
+      cancelBtn.onclick = null;
+      cancelBtn2.onclick = null;
+      input.oninput = null;
+      input.onkeydown = null;
+      resolve(result);
+    };
+    const submit = () => { if (input.value.length === 6) done({ code: input.value, trustIp: trust.checked }); };
+    const cancel = () => done(null);
+
+    input.oninput = () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 6);
+      submitBtn.disabled = input.value.length !== 6;
+    };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') submit();
+      else if (e.key === 'Escape') cancel();
+    };
+    submitBtn.onclick = submit;
+    cancelBtn.onclick = cancel;
+    cancelBtn2.onclick = cancel;
+    overlay.classList.add('visible');
+    setTimeout(() => input.focus(), 30);
+  });
 }
 function setStatus(msg) { document.getElementById('status-bar').textContent = msg; }
 function esc(s) {
@@ -477,7 +746,7 @@ async function doLogin() {
     const r = await api('POST', '/api/auth/login', { username, password, remember });
     const data = await r.json();
     if (!r.ok || !data.success) { errEl.textContent = data.error || 'Login failed'; return; }
-    document.getElementById('top-server').textContent = server;
+    const ts = document.getElementById('top-server'); if (ts) ts.textContent = server;
     await enterApp();
   } catch (err) { errEl.textContent = 'Connection failed: ' + err.message; }
   finally { btn.disabled = false; btn.textContent = 'Connect'; }
@@ -487,8 +756,7 @@ async function enterApp() {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
 
-  // Get current user info for chat — /api/auth/me returns
-  // { data: { user, permissions, currentTenantId } }
+  // Get current user info — /api/auth/me returns { data: { user, permissions, currentTenantId } }
   try {
     const r = await api('GET', '/api/auth/me');
     if (r.ok) {
@@ -499,19 +767,28 @@ async function enterApp() {
       currentOperatorName = u.displayName || u.display_name || u.username || 'Operator';
       currentOperatorAvatar = u.profilePicture || u.profile_picture || u.avatar || '';
       currentTenantId = payload.currentTenantId ?? u.currentTenantId ?? null;
-      // Update chat header avatar
+      // Chat header
       if (currentOperatorAvatar) {
         const hdrAvatar = document.querySelector('.chat-header .avatar');
         if (hdrAvatar) hdrAvatar.innerHTML = '<img src="' + currentOperatorAvatar + '" style="width:36px;height:36px;border-radius:50%%;object-fit:cover" />';
       }
-      // Update chat header name
       const hdrName = document.querySelector('.chat-header .info .name');
       if (hdrName) hdrName.textContent = currentOperatorName;
+      // Top-bar user menu
+      const initials = (currentOperatorName || '?').split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+      const avSm = document.getElementById('user-avatar-sm');
+      if (avSm) avSm.innerHTML = currentOperatorAvatar ? '<img src="' + currentOperatorAvatar + '"/>' : esc(initials);
+      const nameTop = document.getElementById('user-name-top'); if (nameTop) nameTop.textContent = currentOperatorName;
+      const nameMenu = document.getElementById('user-menu-name'); if (nameMenu) nameMenu.textContent = currentOperatorName;
+      const subMenu = document.getElementById('user-menu-sub'); if (subMenu) subMenu.textContent = u.email || u.username || '';
     }
   } catch {}
 
   await loadOverview();
   await loadScripts();
+  await loadTenants();
+  buildNavRail();
+  navigateTo('dashboard');
   initSocketIO();
 }
 
@@ -522,7 +799,7 @@ async function loadOverview() {
     const r = await api('GET', '/api/reach/overview');
     const d = await r.json();
     overview = d.data || { groups: [] };
-    renderTree();
+    if (typeof refreshDevicesTable === 'function') refreshDevicesTable();
     setStatus('Ready \u2014 ' + countDevices() + ' devices');
   } catch (err) { setStatus('Failed to load: ' + err.message); }
 }
@@ -537,7 +814,6 @@ function toggleFavorite(deviceId) {
   if (idx >= 0) favorites.splice(idx, 1);
   else favorites.push(deviceId);
   localStorage.setItem('oblireach_favorites', JSON.stringify(favorites));
-  renderTree();
 }
 function addRecent(device) {
   recents = recents.filter(r => r.id !== device.id);
@@ -546,64 +822,560 @@ function addRecent(device) {
   localStorage.setItem('oblireach_recents', JSON.stringify(recents));
 }
 
-// ── Device tree ──────────────────────────────────────────────────────────────
-function renderTree() {
-  const filter = document.getElementById('search-input').value.toLowerCase();
-  const tree = document.getElementById('device-tree');
-  tree.innerHTML = '';
+// ── Router & nav rail ────────────────────────────────────────────────────────
+let currentRoute = 'dashboard';
+let currentRouteParams = null;
 
-  // Collect all devices for favorites/recents lookup
-  const allDevs = [];
-  for (const g of overview.groups) for (const d of g.devices) allDevs.push(d);
+const NAV_TREE = [
+  { group: 'Overview', items: [
+    { route: 'dashboard',  label: 'Dashboard', icon: 'home' },
+    { route: 'devices',    label: 'Devices',   icon: 'server' },
+  ]},
+  { group: 'Audit', items: [
+    { route: 'logs',       label: 'Logs',      icon: 'file', sub: [
+      { route: 'logs', sub: 'connection', label: 'Connection' },
+      { route: 'logs', sub: 'alarm',      label: 'Alarm' },
+      { route: 'logs', sub: 'console',    label: 'Console' },
+      { route: 'logs', sub: 'script',     label: 'Script' },
+    ]},
+  ]},
+  { group: 'Access', items: [
+    { route: 'users',      label: 'Users',     icon: 'user'   },
+    { route: 'groups',     label: 'Groups',    icon: 'users'  },
+    { route: 'policies',   label: 'Policies',  icon: 'shield' },
+  ]},
+  { group: 'Config', items: [
+    { route: 'deployment', label: 'Deployment', icon: 'download' },
+    { route: 'settings',   label: 'Settings',   icon: 'cog' },
+  ]},
+];
 
-  // Favorites group
-  const favDevs = allDevs.filter(d => favorites.includes(d.id) && (!filter || d.hostname.toLowerCase().includes(filter)));
-  if (favDevs.length > 0) {
-    const gl = document.createElement('div'); gl.className = 'group-label'; gl.textContent = '\u2605 Favorites'; tree.appendChild(gl);
-    for (const dev of favDevs) tree.appendChild(createDeviceRow(dev));
-  }
+const NAV_ICONS = {
+  home:     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>',
+  server:   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="6" rx="2"/><rect x="2" y="14" width="20" height="6" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>',
+  file:     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  user:     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  users:    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>',
+  shield:   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  download: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  cog:      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
+};
 
-  // Recents group (only if no filter)
-  if (!filter && recents.length > 0) {
-    const recentDevs = recents.map(r => allDevs.find(d => d.id === r.id)).filter(Boolean).filter(d => !favorites.includes(d.id));
-    if (recentDevs.length > 0) {
-      const gl = document.createElement('div'); gl.className = 'group-label'; gl.textContent = 'Recent'; tree.appendChild(gl);
-      for (const dev of recentDevs) tree.appendChild(createDeviceRow(dev));
+function buildNavRail() {
+  const rail = document.getElementById('nav-rail');
+  rail.innerHTML = '';
+  for (const g of NAV_TREE) {
+    const lbl = document.createElement('div'); lbl.className = 'nav-group-label'; lbl.textContent = g.group; rail.appendChild(lbl);
+    for (const it of g.items) {
+      const item = document.createElement('div');
+      item.className = 'nav-item';
+      item.dataset.route = it.route;
+      item.innerHTML = (NAV_ICONS[it.icon] || '') + '<span>' + esc(it.label) + '</span>' +
+        (it.sub ? '<svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 6 15 12 9 18"/></svg>' : '');
+      if (it.sub) {
+        const sub = document.createElement('div'); sub.className = 'nav-sub';
+        for (const s of it.sub) {
+          const si = document.createElement('div'); si.className = 'nav-item'; si.dataset.route = s.route; si.dataset.sub = s.sub;
+          si.textContent = s.label;
+          si.addEventListener('click', ev => { ev.stopPropagation(); navigateTo(s.route, { sub: s.sub }); });
+          sub.appendChild(si);
+        }
+        item.addEventListener('click', () => {
+          const isOpen = sub.classList.toggle('open');
+          item.classList.toggle('expanded', isOpen);
+          if (isOpen) navigateTo(it.route, { sub: it.sub[0].sub });
+        });
+        rail.appendChild(item); rail.appendChild(sub);
+      } else {
+        item.addEventListener('click', () => navigateTo(it.route));
+        rail.appendChild(item);
+      }
     }
   }
+}
 
-  // Regular groups
-  for (const group of overview.groups) {
-    const devs = group.devices.filter(d => !filter || d.hostname.toLowerCase().includes(filter));
-    if (devs.length === 0) continue;
-    const gl = document.createElement('div');
-    gl.className = 'group-label';
-    gl.textContent = group.name;
-    tree.appendChild(gl);
-    for (const dev of devs) tree.appendChild(createDeviceRow(dev));
+function navigateTo(route, params) {
+  currentRoute = route; currentRouteParams = params || null;
+  document.querySelectorAll('.tenant-menu.open,.user-menu.open').forEach(m => m.classList.remove('open'));
+  document.querySelectorAll('#nav-rail .nav-item').forEach(el => {
+    const r = el.dataset.route, s = el.dataset.sub;
+    let active = false;
+    if (r === route) {
+      if (s) active = !!(params && params.sub === s);
+      else if (!el.closest('.nav-sub')) active = true;
+    }
+    el.classList.toggle('active', active);
+    if (r === route && s && active) {
+      const parent = el.closest('.nav-sub'); if (parent) parent.classList.add('open');
+      const head = parent ? parent.previousElementSibling : null;
+      if (head) head.classList.add('expanded');
+    }
+  });
+  const pc = document.getElementById('page-content');
+  if (!pc) return;
+  pc.innerHTML = '';
+  switch (route) {
+    case 'dashboard':     renderDashboardPage(pc); break;
+    case 'devices':       renderDevicesPage(pc); break;
+    case 'device-detail': renderDeviceDetail(pc, params && params.device); break;
+    case 'logs':          renderLogsPage(pc, (params && params.sub) || 'connection'); break;
+    case 'users':         renderStubPage(pc, 'Users', 'Manage operator accounts (coming soon).'); break;
+    case 'groups':        renderStubPage(pc, 'Groups', 'User groups & cross-group ACL (coming soon).'); break;
+    case 'policies':      renderStubPage(pc, 'Policies', 'Push bulk settings to endpoints (coming soon).'); break;
+    case 'deployment':    renderStubPage(pc, 'Deployment', 'Download branded installers per tenant (coming soon).'); break;
+    case 'settings':      renderSettingsPage(pc, (params && params.sub) || 'profile'); break;
+    default:              renderDashboardPage(pc);
   }
 }
 
-function createDeviceRow(dev) {
-  const row = document.createElement('div');
-  row.className = 'device-row' + (selectedDevice?.id === dev.id ? ' active' : '');
-  const dc = dev.oblireach.online ? 'online' : 'warn';
-  const isFav = favorites.includes(dev.id);
-  row.innerHTML = '<span class="dot ' + dc + '"></span>' +
-    '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(dev.hostname) + '</span>' +
-    '<span class="fav-star ' + (isFav ? 'active' : '') + '" title="Toggle favorite">' + (isFav ? '\u2605' : '\u2606') + '</span>';
-  row.querySelector('.fav-star').addEventListener('click', e => { e.stopPropagation(); toggleFavorite(dev.id); });
-  row.addEventListener('click', () => selectDevice(dev));
-  return row;
+function renderStubPage(pc, title, msg) {
+  const h = document.createElement('div'); h.className = 'page-header';
+  h.innerHTML = '<h1>' + esc(title) + '</h1>';
+  const b = document.createElement('div'); b.className = 'page-body';
+  b.innerHTML = '<div class="panel"><div class="panel-body"><div class="empty" style="padding:40px"><div class="empty-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.25"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div><span>' + esc(msg) + '</span></div></div></div>';
+  pc.appendChild(h); pc.appendChild(b);
 }
 
-document.getElementById('search-input').addEventListener('input', renderTree);
-document.getElementById('btn-refresh').addEventListener('click', async () => {
-  await loadOverview();
-  if (selectedDevice) {
-    for (const g of overview.groups) { const d = g.devices.find(x => x.id === selectedDevice.id); if (d) { selectedDevice = d; break; } }
+// ── Tenant switcher + user menu ──────────────────────────────────────────────
+let tenants = [];
+async function loadTenants() {
+  try {
+    const r = await api('GET', '/api/tenants');
+    const d = await r.json();
+    tenants = Array.isArray(d.data) ? d.data : (Array.isArray(d) ? d : []);
+    renderTenantSwitcher();
+  } catch {}
+}
+
+function renderTenantSwitcher() {
+  const sw = document.getElementById('tenant-switcher');
+  const lbl = document.getElementById('tenant-label');
+  const menu = document.getElementById('tenant-menu');
+  if (!tenants.length) { sw.style.display = 'none'; return; }
+  sw.style.display = 'flex';
+  const cur = tenants.find(t => t.id === currentTenantId) || tenants[0];
+  lbl.textContent = cur?.name || ('Tenant #' + (currentTenantId || '?'));
+  menu.innerHTML = '';
+  for (const t of tenants) {
+    const mi = document.createElement('div');
+    mi.className = 'tenant-menu-item' + (t.id === currentTenantId ? ' active' : '');
+    mi.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="' + (t.id === currentTenantId ? '' : 'visibility:hidden') + '"><polyline points="20 6 9 17 4 12"/></svg><span>' + esc(t.name) + '</span>';
+    mi.addEventListener('click', e => { e.stopPropagation(); switchTenant(t.id); });
+    menu.appendChild(mi);
   }
+}
+
+async function switchTenant(tenantId) {
+  try {
+    const r = await api('POST', '/api/tenant/switch', { tenantId });
+    if (!r.ok) return;
+    currentTenantId = tenantId;
+    document.getElementById('tenant-menu').classList.remove('open');
+    renderTenantSwitcher();
+    await loadOverview();
+    if (currentRoute === 'dashboard' || currentRoute === 'devices') navigateTo(currentRoute, currentRouteParams);
+  } catch {}
+}
+
+document.getElementById('tenant-switcher').addEventListener('click', e => {
+  if (e.target.closest('.tenant-menu')) return;
+  document.getElementById('user-menu').classList.remove('open');
+  document.getElementById('tenant-menu').classList.toggle('open');
 });
+document.getElementById('user-menu-trigger').addEventListener('click', e => {
+  if (e.target.closest('.user-menu')) return;
+  document.getElementById('tenant-menu').classList.remove('open');
+  document.getElementById('user-menu').classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('#tenant-switcher')) document.getElementById('tenant-menu')?.classList.remove('open');
+  if (!e.target.closest('#user-menu-trigger')) document.getElementById('user-menu')?.classList.remove('open');
+});
+document.getElementById('user-menu-settings').addEventListener('click', () => navigateTo('settings'));
+
+// ── Dashboard page ───────────────────────────────────────────────────────────
+function renderDashboardPage(pc) {
+  const h = document.createElement('div'); h.className = 'page-header';
+  h.innerHTML = '<h1>Dashboard</h1><div class="breadcrumb">Welcome back</div>';
+  pc.appendChild(h);
+  const body = document.createElement('div'); body.className = 'page-body';
+
+  let online = 0, offline = 0, notInstalled = 0, updates = 0;
+  const allDevs = [];
+  for (const g of overview.groups) for (const d of g.devices) {
+    allDevs.push(d);
+    if (!d.oblireach?.installed) notInstalled++;
+    else if (d.oblireach?.online) online++;
+    else offline++;
+    if (d.oblireach?.updateAvailable) updates++;
+  }
+
+  const kpi = document.createElement('div'); kpi.className = 'kpi-grid';
+  kpi.innerHTML =
+    '<div class="kpi-card online"><div class="label">Agents online</div><div class="value">' + online + '</div><div class="sub">Ready for remote</div></div>' +
+    '<div class="kpi-card offline"><div class="label">Offline</div><div class="value">' + offline + '</div><div class="sub">Installed but unreachable</div></div>' +
+    '<div class="kpi-card warn"><div class="label">Updates pending</div><div class="value">' + updates + '</div><div class="sub">Newer agent available</div></div>' +
+    '<div class="kpi-card"><div class="label">Total devices</div><div class="value">' + allDevs.length + '</div><div class="sub">' + notInstalled + ' without Reach agent</div></div>';
+  body.appendChild(kpi);
+
+  const recPanel = document.createElement('div'); recPanel.className = 'panel';
+  recPanel.innerHTML =
+    '<div class="panel-header">Recent connections<div class="panel-actions"><button class="btn-sm" id="clear-recents-btn">Clear</button></div></div>' +
+    '<div class="panel-body flush"><div class="recent-list" id="recent-list"></div></div>';
+  body.appendChild(recPanel);
+
+  const favPanel = document.createElement('div'); favPanel.className = 'panel';
+  favPanel.innerHTML =
+    '<div class="panel-header">Favorites</div>' +
+    '<div class="panel-body flush"><div class="recent-list" id="fav-list"></div></div>';
+  body.appendChild(favPanel);
+
+  pc.appendChild(body);
+
+  const recList = body.querySelector('#recent-list');
+  const recentDevs = recents.map(r => allDevs.find(d => d.id === r.id)).filter(Boolean);
+  if (recentDevs.length === 0) {
+    recList.innerHTML = '<div class="recent-empty">No recent sessions yet. Connect to a device to see it here.</div>';
+  } else {
+    for (const dev of recentDevs.slice(0, 8)) {
+      const r = recents.find(x => x.id === dev.id);
+      const row = document.createElement('div'); row.className = 'recent-item';
+      const dc = dev.oblireach.online ? 'online' : 'warn';
+      row.innerHTML = '<span class="dot ' + dc + '"></span><span class="rname">' + esc(dev.hostname) + '</span>' +
+        '<span class="tag-chip ' + osTag(dev.osType) + '">' + esc(dev.osType || '?') + '</span>' +
+        '<span class="rwhen">' + relTime(r?.ts || 0) + '</span>';
+      row.addEventListener('click', () => openDeviceDetail(dev));
+      recList.appendChild(row);
+    }
+  }
+  body.querySelector('#clear-recents-btn').addEventListener('click', () => {
+    recents = []; localStorage.setItem('oblireach_recents', '[]');
+    renderDashboardPage(pc);
+  });
+
+  const favList = body.querySelector('#fav-list');
+  const favDevs = allDevs.filter(d => favorites.includes(d.id));
+  if (favDevs.length === 0) {
+    favList.innerHTML = '<div class="recent-empty">No favorites yet. Star a device from the Devices page.</div>';
+  } else {
+    for (const dev of favDevs) {
+      const row = document.createElement('div'); row.className = 'recent-item';
+      const dc = dev.oblireach.online ? 'online' : 'warn';
+      row.innerHTML = '<span class="dot ' + dc + '"></span><span class="rname">' + esc(dev.hostname) + '</span>' +
+        '<span class="tag-chip ' + osTag(dev.osType) + '">' + esc(dev.osType || '?') + '</span>' +
+        '<span class="rwhen"><span class="tag-chip ' + (dev.oblireach.online ? 'on' : 'off') + '">' + (dev.oblireach.online ? 'online' : 'offline') + '</span></span>';
+      row.addEventListener('click', () => openDeviceDetail(dev));
+      favList.appendChild(row);
+    }
+  }
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  const m = Math.round(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+
+function osTag(osType) {
+  const s = String(osType || '').toLowerCase();
+  if (s.includes('windows') || s.includes('win')) return 'win';
+  if (s.includes('linux')) return 'linux';
+  if (s.includes('mac') || s.includes('darwin')) return 'mac';
+  return 'off';
+}
+
+// ── Devices page (Rustdesk-style table) ──────────────────────────────────────
+let devicesFilter = { q: '', online: '', os: '' };
+function renderDevicesPage(pc) {
+  const h = document.createElement('div'); h.className = 'page-header';
+  h.innerHTML = '<h1>Devices</h1><div class="breadcrumb">Inventory</div>' +
+    '<div class="page-actions"><button class="btn-sm" id="devices-refresh">Refresh</button></div>';
+  pc.appendChild(h);
+  const body = document.createElement('div'); body.className = 'page-body';
+  const bar = document.createElement('div'); bar.className = 'filter-bar';
+  bar.innerHTML =
+    '<input id="dq" placeholder="Search hostname..." value="' + esc(devicesFilter.q) + '"/>' +
+    '<select id="dq-online"><option value="">All states</option><option value="online">Online</option><option value="offline">Offline</option></select>' +
+    '<select id="dq-os"><option value="">All OS</option><option value="windows">Windows</option><option value="linux">Linux</option><option value="macos">macOS</option></select>' +
+    '<span class="spacer"></span>' +
+    '<span class="muted-hint"><span id="dev-count">0</span> results</span>';
+  body.appendChild(bar);
+  const panel = document.createElement('div'); panel.className = 'panel';
+  panel.innerHTML =
+    '<div class="panel-body flush" style="overflow-x:auto"><table class="dt" id="devices-table">' +
+    '<thead><tr><th style="width:40px"></th><th>Hostname</th><th>OS</th><th>Agent</th><th>Status</th><th>Sessions</th><th style="text-align:right">Actions</th></tr></thead>' +
+    '<tbody id="devices-tbody"></tbody></table></div>';
+  body.appendChild(panel);
+  pc.appendChild(body);
+
+  bar.querySelector('#dq').addEventListener('input', e => { devicesFilter.q = e.target.value; refreshDevicesTable(); });
+  bar.querySelector('#dq-online').value = devicesFilter.online;
+  bar.querySelector('#dq-online').addEventListener('change', e => { devicesFilter.online = e.target.value; refreshDevicesTable(); });
+  bar.querySelector('#dq-os').value = devicesFilter.os;
+  bar.querySelector('#dq-os').addEventListener('change', e => { devicesFilter.os = e.target.value; refreshDevicesTable(); });
+  document.getElementById('devices-refresh').addEventListener('click', async () => { await loadOverview(); refreshDevicesTable(); });
+
+  refreshDevicesTable();
+}
+
+function refreshDevicesTable() {
+  const tbody = document.getElementById('devices-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const q = (devicesFilter.q || '').toLowerCase();
+  const allDevs = [];
+  for (const g of overview.groups) for (const d of g.devices) allDevs.push(d);
+  const filtered = allDevs.filter(d => {
+    if (q && !d.hostname.toLowerCase().includes(q)) return false;
+    if (devicesFilter.online === 'online' && !d.oblireach?.online) return false;
+    if (devicesFilter.online === 'offline' && d.oblireach?.online) return false;
+    if (devicesFilter.os) {
+      const s = String(d.osType || '').toLowerCase();
+      if (devicesFilter.os === 'windows' && !(s.includes('windows') || s.includes('win'))) return false;
+      if (devicesFilter.os === 'linux' && !s.includes('linux')) return false;
+      if (devicesFilter.os === 'macos' && !(s.includes('mac') || s.includes('darwin'))) return false;
+    }
+    return true;
+  });
+  const cnt = document.getElementById('dev-count'); if (cnt) cnt.textContent = filtered.length;
+  for (const dev of filtered) {
+    const tr = document.createElement('tr');
+    const isFav = favorites.includes(dev.id);
+    const dc = dev.oblireach.online ? 'online' : dev.oblireach.installed ? 'warn' : 'offline';
+    const sessions = dev.oblireach?.sessions?.length || 0;
+    const starChar = isFav ? '★' : '☆';
+    tr.innerHTML =
+      '<td><span class="fav-star ' + (isFav ? 'active' : '') + '" title="Toggle favorite">' + starChar + '</span></td>' +
+      '<td><div class="cell-hostname"><span class="dot ' + dc + '"></span>' + esc(dev.hostname) + (dev.oblireach?.updateAvailable ? ' <span class="tag-chip warn" style="margin-left:6px">UPDATE</span>' : '') + '</div></td>' +
+      '<td><span class="tag-chip ' + osTag(dev.osType) + '">' + esc(dev.osType || '?') + '</span></td>' +
+      '<td>' + (dev.oblireach?.version ? 'v' + esc(dev.oblireach.version) : '<span class="muted-hint">-</span>') + '</td>' +
+      '<td><span class="tag-chip ' + (dev.oblireach?.online ? 'on' : 'off') + '">' + (dev.oblireach?.installed ? (dev.oblireach.online ? 'online' : 'offline') : 'not installed') + '</span></td>' +
+      '<td>' + sessions + '</td>' +
+      '<td class="actions">' +
+      '<button class="icon-btn primary" title="Remote" data-act="remote" ' + (dev.oblireach?.online ? '' : 'disabled') + '><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 3 21 12 6 21 6 3"/></svg></button>' +
+      '<button class="icon-btn" title="Chat" data-act="chat" ' + (dev.oblireach?.online ? '' : 'disabled') + '><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>' +
+      '<button class="icon-btn" title="Info" data-act="info"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>' +
+      '</td>';
+    tr.querySelector('.fav-star').addEventListener('click', e => { e.stopPropagation(); toggleFavorite(dev.id); refreshDevicesTable(); });
+    tr.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-act]');
+      if (btn) {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        const act = btn.dataset.act;
+        if (act === 'remote') openDeviceDetail(dev, 'remote');
+        else if (act === 'chat') { openDeviceDetail(dev); setTimeout(() => toggleChat(true), 120); }
+        else if (act === 'info') openDeviceDetail(dev, 'info');
+        return;
+      }
+      openDeviceDetail(dev);
+    });
+    tbody.appendChild(tr);
+  }
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted2)">No devices match your filters.</td></tr>';
+  }
+}
+
+function openDeviceDetail(dev, tab) {
+  if (tab) activeTab = tab;
+  navigateTo('device-detail', { device: dev });
+}
+
+// ── Device detail page (wraps existing Remote/Scripts/Info tabs) ─────────────
+function renderDeviceDetail(pc, dev) {
+  if (!dev) { renderDevicesPage(pc); return; }
+  selectedDevice = dev; addRecent(dev);
+  pc.innerHTML = '';
+  selectDeviceInto(dev, pc);
+}
+
+// ── Logs pages ───────────────────────────────────────────────────────────────
+function renderLogsPage(pc, sub) {
+  const titles = { connection: 'Connection log', alarm: 'Alarm log', console: 'Console log', script: 'Script log' };
+  const hints = {
+    connection: 'History of remote sessions established on this tenant.',
+    alarm:      'Security events — failed logins, blocked actions, unusual activity.',
+    console:    'Audit trail of admin actions taken in the console.',
+    script:     'Script executions on managed devices.',
+  };
+  const h = document.createElement('div'); h.className = 'page-header';
+  h.innerHTML = '<h1>Logs</h1><div class="breadcrumb">' + esc(titles[sub] || sub) + '</div>';
+  pc.appendChild(h);
+  const body = document.createElement('div'); body.className = 'page-body';
+  const panel = document.createElement('div'); panel.className = 'panel';
+  panel.innerHTML = '<div class="panel-header">' + esc(titles[sub] || sub) + '<span class="muted-hint" style="margin-left:10px;font-weight:400">' + esc(hints[sub] || '') + '</span></div>' +
+    '<div class="panel-body flush" style="overflow-x:auto"><table class="dt"><thead id="logs-thead"></thead><tbody id="logs-tbody"></tbody></table></div>';
+  body.appendChild(panel);
+  pc.appendChild(body);
+  loadLogs(sub);
+}
+
+async function loadLogs(sub) {
+  const thead = document.getElementById('logs-thead');
+  const tbody = document.getElementById('logs-tbody');
+  if (!thead || !tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted2)">Loading...</td></tr>';
+  try {
+    if (sub === 'connection') {
+      thead.innerHTML = '<tr><th>Started</th><th>Device</th><th>Protocol</th><th>Operator</th><th>Status</th><th>Duration</th></tr>';
+      const r = await api('GET', '/api/remote/sessions');
+      const d = await r.json();
+      const items = d?.data?.items || [];
+      tbody.innerHTML = '';
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted2)">No sessions yet.</td></tr>'; return; }
+      for (const s of items.slice(0, 100)) {
+        const started = s.started_at ? new Date(s.started_at).toLocaleString() : '-';
+        const ended = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
+        const dur = s.started_at ? Math.round((ended - new Date(s.started_at).getTime()) / 1000) + 's' : '-';
+        tbody.innerHTML += '<tr><td>' + esc(started) + '</td><td>' + esc(String(s.device_id || '-')) + '</td><td>' + esc(s.protocol || '-') + '</td><td>' + esc(String(s.started_by || '-')) + '</td><td><span class="tag-chip ' + (s.status === 'active' ? 'on' : 'off') + '">' + esc(s.status || '-') + '</span></td><td>' + dur + '</td></tr>';
+      }
+    } else if (sub === 'console' || sub === 'alarm') {
+      thead.innerHTML = '<tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>IP</th><th>Details</th></tr>';
+      const r = await api('GET', '/api/audit?limit=100' + (sub === 'alarm' ? '&category=security' : ''));
+      const d = await r.json();
+      const items = d?.data?.items || d?.items || [];
+      tbody.innerHTML = '';
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted2)">No entries.</td></tr>'; return; }
+      for (const e of items) {
+        const ts = e.created_at || e.timestamp || '';
+        tbody.innerHTML += '<tr><td>' + esc(ts ? new Date(ts).toLocaleString() : '-') + '</td><td>' + esc(e.username || e.user_id || '-') + '</td><td>' + esc(e.action || '-') + '</td><td>' + esc(e.resource_type || '-') + (e.resource_path ? ' / ' + esc(e.resource_path) : '') + '</td><td>' + esc(e.ip_address || '-') + '</td><td class="muted-hint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(JSON.stringify(e.details || {})) + '</td></tr>';
+      }
+    } else if (sub === 'script') {
+      thead.innerHTML = '<tr><th>Time</th><th>Script</th><th>Device</th><th>Status</th><th>Exit</th><th>Duration</th></tr>';
+      const r = await api('GET', '/api/executions?limit=100');
+      const d = await r.json();
+      const items = d?.data?.items || d?.items || [];
+      tbody.innerHTML = '';
+      if (!items.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted2)">No script runs yet.</td></tr>'; return; }
+      for (const x of items) {
+        const ts = x.created_at || x.started_at || '';
+        tbody.innerHTML += '<tr><td>' + esc(ts ? new Date(ts).toLocaleString() : '-') + '</td><td>' + esc(x.script_name || x.script_id || '-') + '</td><td>' + esc(String(x.device_id || '-')) + '</td><td><span class="tag-chip ' + (x.status === 'success' ? 'on' : 'off') + '">' + esc(x.status || '-') + '</span></td><td>' + (x.exitCode ?? '-') + '</td><td>' + (x.duration_ms ? (x.duration_ms / 1000).toFixed(1) + 's' : '-') + '</td></tr>';
+      }
+    }
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--danger)">Failed to load: ' + esc(err.message || String(err)) + '</td></tr>';
+  }
+}
+
+// ── Settings page ────────────────────────────────────────────────────────────
+function renderSettingsPage(pc, sub) {
+  const h = document.createElement('div'); h.className = 'page-header';
+  h.innerHTML = '<h1>Settings</h1>';
+  pc.appendChild(h);
+  const body = document.createElement('div'); body.className = 'page-body';
+  body.innerHTML = '<div class="settings-layout">' +
+    '<div class="settings-nav">' +
+    '<div class="settings-nav-item ' + (sub === 'profile' ? 'active' : '') + '" data-sub="profile">Profile</div>' +
+    '<div class="settings-nav-item ' + (sub === 'trusted-ips' ? 'active' : '') + '" data-sub="trusted-ips">Trusted IPs</div>' +
+    '<div class="settings-nav-item ' + (sub === 'server' ? 'active' : '') + '" data-sub="server">Server</div>' +
+    '<div class="settings-nav-item ' + (sub === 'about' ? 'active' : '') + '" data-sub="about">About</div>' +
+    '</div>' +
+    '<div class="settings-body" id="settings-body"></div></div>';
+  pc.appendChild(body);
+  body.querySelectorAll('.settings-nav-item').forEach(el => {
+    el.addEventListener('click', () => navigateTo('settings', { sub: el.dataset.sub }));
+  });
+  const sb = body.querySelector('#settings-body');
+  if (sub === 'trusted-ips') renderTrustedIpsSection(sb);
+  else if (sub === 'server') renderServerSection(sb);
+  else if (sub === 'about') renderAboutSection(sb);
+  else renderProfileSection(sb);
+}
+
+function renderProfileSection(sb) {
+  const panel = document.createElement('div'); panel.className = 'panel';
+  panel.innerHTML = '<div class="panel-header">Profile</div><div class="panel-body" id="profile-body"></div>';
+  sb.appendChild(panel);
+  const b = panel.querySelector('#profile-body');
+  b.innerHTML =
+    '<div class="setting-row"><div class="setting-label"><div class="title">' + esc(currentOperatorName || 'Operator') + '</div><div class="sub" id="prof-email">-</div></div>' +
+    '<div class="setting-control"><span id="prof-avatar" style="display:inline-block;width:44px;height:44px;border-radius:50%;background:var(--accent);text-align:center;line-height:44px;color:white;font-weight:700">' + esc((currentOperatorName || '?').slice(0,2).toUpperCase()) + '</span></div></div>' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Display name</div><div class="sub" id="prof-display">-</div></div></div>' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Role</div><div class="sub" id="prof-role">-</div></div></div>' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Authentication</div><div class="sub" id="prof-auth">-</div></div><div class="setting-control" id="prof-auth-action"></div></div>';
+  // Populate from /api/auth/me
+  api('GET', '/api/auth/me').then(r => r.json()).then(d => {
+    const u = (d?.data?.user) || d?.data || {};
+    if (u.profilePicture || u.profile_picture || u.avatar) {
+      b.querySelector('#prof-avatar').innerHTML = '<img src="' + (u.profilePicture || u.profile_picture || u.avatar) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover"/>';
+    }
+    b.querySelector('#prof-email').textContent = u.email || '-';
+    b.querySelector('#prof-display').textContent = u.displayName || u.display_name || u.username || '-';
+    b.querySelector('#prof-role').textContent = u.role || '-';
+    const isObligate = (u.foreignSource || u.foreign_source) === 'obligate';
+    b.querySelector('#prof-auth').textContent = isObligate ? 'Obligate SSO — manage TOTP / password from your Obligate profile.' : 'Local account';
+  }).catch(() => {});
+}
+
+function renderTrustedIpsSection(sb) {
+  const panel = document.createElement('div'); panel.className = 'panel';
+  panel.innerHTML = '<div class="panel-header">Trusted IPs (2FA)<div class="panel-actions"><button class="btn-sm" id="revoke-all-tip">Revoke all</button></div></div>' +
+    '<div class="panel-body">' +
+    '<p class="muted-hint" style="margin-bottom:12px">IPs where you ticked "Trust this IP for 24h" when you last entered a 2FA code. Sensitive actions from these IPs skip the prompt until expiry.</p>' +
+    '<div id="tip-list"></div></div>';
+  sb.appendChild(panel);
+  const list = panel.querySelector('#tip-list');
+  list.innerHTML = '<div class="muted-hint" style="padding:14px">Loading...</div>';
+  api('GET', '/api/profile/trusted-ips').then(r => r.json()).then(d => {
+    const items = d?.data || d || [];
+    if (!Array.isArray(items) || items.length === 0) {
+      list.innerHTML = '<div class="muted-hint" style="padding:14px">No trusted IPs yet.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const it of items) {
+      const row = document.createElement('div'); row.className = 'tip-row';
+      const trustedUntil = it.trustedUntil || it.trusted_until;
+      const remaining = trustedUntil ? Math.max(0, new Date(trustedUntil).getTime() - Date.now()) : 0;
+      const mins = Math.floor(remaining / 60000);
+      const exp = mins > 60 ? Math.round(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm';
+      row.innerHTML = '<span class="ipv">' + esc(it.ip) + '</span><span class="exp">expires in ' + esc(exp) + '</span><span class="spacer"></span>' +
+        '<button class="btn-ghost">Revoke</button>';
+      row.querySelector('button').addEventListener('click', async () => {
+        await api('DELETE', '/api/profile/trusted-ips/' + encodeURIComponent(it.ip));
+        renderTrustedIpsSection(sb);
+      });
+      list.appendChild(row);
+    }
+  }).catch(() => {
+    list.innerHTML = '<div class="muted-hint" style="padding:14px">Not available (endpoint not found).</div>';
+  });
+  panel.querySelector('#revoke-all-tip').addEventListener('click', async () => {
+    if (!confirm('Revoke all trusted IPs?')) return;
+    await api('DELETE', '/api/profile/trusted-ips');
+    renderTrustedIpsSection(sb);
+  });
+}
+
+function renderServerSection(sb) {
+  const panel = document.createElement('div'); panel.className = 'panel';
+  panel.innerHTML = '<div class="panel-header">Server connection</div><div class="panel-body">' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Obliance URL</div><div class="sub" id="srv-url">-</div></div>' +
+    '<div class="setting-control"><button class="btn-ghost" id="btn-change-srv">Sign out & change</button></div></div>' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Connection</div><div class="sub">Reload overview, reconnect socket.</div></div>' +
+    '<div class="setting-control"><button class="btn-ghost" id="btn-reload-srv">Reload</button></div></div>' +
+    '</div>';
+  sb.appendChild(panel);
+  fetch('/local/config').then(r => r.json()).then(c => { panel.querySelector('#srv-url').textContent = c.serverUrl || '-'; }).catch(() => {});
+  panel.querySelector('#btn-change-srv').addEventListener('click', () => document.getElementById('user-menu-logout').click());
+  panel.querySelector('#btn-reload-srv').addEventListener('click', async () => { await loadOverview(); await loadTenants(); setStatus('Reloaded'); });
+}
+
+function renderAboutSection(sb) {
+  const panel = document.createElement('div'); panel.className = 'panel';
+  const ver = window.__reach_version || '-';
+  panel.innerHTML = '<div class="panel-header">About Oblireach</div><div class="panel-body">' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Client version</div><div class="sub">v' + esc(ver) + '</div></div></div>' +
+    '<div class="setting-row"><div class="setting-label"><div class="title">Desktop remote support for the Obliance RMM.</div><div class="sub">Built with WebView2. Charcoal UI with the Reach red accent.</div></div></div>' +
+    '</div>';
+  sb.appendChild(panel);
+}
 
 // ── Multi-tab sessions ───────────────────────────────────────────────────────
 function renderSessionTabs() {
@@ -631,10 +1403,8 @@ function switchSessionTab(tabId) {
   remoteDecoder = tab.decoder;
   remoteTs = tab.ts;
   renderSessionTabs();
-  renderTree();
   // Re-render content for this device
-  const area = document.getElementById('content-area');
-  selectDevice(tab.device);
+  openDeviceDetail(tab.device);
 }
 
 function closeSessionTab(tabId) {
@@ -667,19 +1437,15 @@ function addSessionTab(device) {
 }
 
 // ── Device detail ────────────────────────────────────────────────────────────
-function selectDevice(dev) {
+function selectDeviceInto(dev, area) {
   // Close previous chat if switching device
   if (selectedDevice && selectedDevice.id !== dev.id) closeChat();
   selectedDevice = dev;
-  addRecent(dev);
-  renderTree();
 
   // Show/hide chat button
   const chatBtn = document.getElementById('btn-chat');
   chatBtn.style.display = dev.oblireach?.online ? '' : 'none';
 
-  const area = document.getElementById('content-area');
-  area.innerHTML = '';
   area.style.display = 'flex';
   area.style.flexDirection = 'column';
   area.style.overflow = 'hidden';
@@ -688,11 +1454,13 @@ function selectDevice(dev) {
   const hdr = document.createElement('div');
   hdr.className = 'device-header';
   const dc = dev.oblireach.online ? 'online' : dev.oblireach.installed ? 'warn' : 'offline';
-  hdr.innerHTML = '<span class="dot ' + dc + '" style="width:9px;height:9px"></span>' +
+  hdr.innerHTML = '<button class="btn-sm" id="_back-to-devices" style="padding:5px 8px" title="Back to Devices"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>' +
+    '<span class="dot ' + dc + '" style="width:9px;height:9px"></span>' +
     '<h2>' + esc(dev.hostname) + '</h2>' +
-    (dev.oblireach.updateAvailable ? '<span style="font-size:10px;color:var(--warn);font-weight:600;background:rgba(245,158,11,.12);padding:2px 8px;border-radius:6px">UPDATE</span>' : '') +
+    (dev.oblireach.updateAvailable ? '<span class="tag-chip warn">UPDATE</span>' : '') +
     '<span style="font-size:11px;color:var(--muted)">' + esc(dev.osType) + ' \u00B7 ' + esc(dev.status) + '</span>';
   area.appendChild(hdr);
+  hdr.querySelector('#_back-to-devices').addEventListener('click', () => navigateTo('devices'));
 
   // Tabs
   const tabs = document.createElement('div');
@@ -714,9 +1482,12 @@ function selectDevice(dev) {
   switchTab(activeTab, area);
 }
 
+// Back-compat alias
+function selectDevice(dev) { openDeviceDetail(dev); }
+
 function switchTab(tab, area) {
   activeTab = tab;
-  area = area || document.getElementById('content-area');
+  area = area || document.getElementById('page-content');
   area.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   if (tab !== 'remote') stopRemote();
   const tc = document.getElementById('tab-content');
@@ -1785,10 +2556,12 @@ function playNotifSound() {
 }
 
 // ── Top bar ──────────────────────────────────────────────────────────────────
-document.getElementById('btn-logout').addEventListener('click', async () => {
+document.getElementById('user-menu-logout').addEventListener('click', async () => {
   stopRemote(); closeChat();
   await fetch('/local/logout', { method: 'POST' });
-  // Show login overlay with SSO check instead of full page reload
+  // Close menus
+  document.getElementById('user-menu').classList.remove('open');
+  document.getElementById('tenant-menu').classList.remove('open');
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('inp-pass').value = '';
@@ -1797,6 +2570,10 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   const server = document.getElementById('inp-server').value.trim();
   if (server) checkSso();
 });
+document.getElementById('btn-refresh').addEventListener('click', async () => {
+  await loadOverview();
+  if (currentRoute === 'dashboard' || currentRoute === 'devices') navigateTo(currentRoute, currentRouteParams);
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
@@ -1804,7 +2581,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   const cfg = await cfgR.json();
   if (cfg.serverUrl) {
     document.getElementById('inp-server').value = cfg.serverUrl;
-    document.getElementById('top-server').textContent = cfg.serverUrl;
+    const ts = document.getElementById('top-server'); if (ts) ts.textContent = cfg.serverUrl;
   }
   if (cfg.username) document.getElementById('inp-user').value = cfg.username;
 
