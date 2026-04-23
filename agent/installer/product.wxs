@@ -76,47 +76,14 @@
         </Component>
 
         <!--
-          Virtual Display Driver bundle (MttVDD, signed by SignPath, MIT).
-          Sits next to the agent exe; the agent service registers it with
-          Windows at first start via pnputil. Provides a DXGI-capturable
-          virtual monitor so headless / pre-login / RDP-disconnected
-          sessions can still be streamed.
+          No Indirect Display Driver bundled. Pre-login / Winlogon / UAC
+          capture is handled by spawning the helper directly on
+          winsta0\winlogon (STARTUPINFO.lpDesktop), not by plugging a
+          virtual monitor. TeamViewer and RustDesk do the same for normal
+          remote control — their IDDs are only used for privacy mode and
+          headless-no-console machines, which aren't part of Oblireach's
+          scope today.
         -->
-        <Directory Id="VddDir" Name="vdd">
-          <Component Id="VddFiles" Guid="A1B2C3D4-E5F6-7890-ABCD-012345670020">
-            <File Id="VddInf"      Source="driver-assets\vdd\MttVDD.inf"            Name="MttVDD.inf" />
-            <File Id="VddDll"      Source="driver-assets\vdd\MttVDD.dll"            Name="MttVDD.dll" />
-            <File Id="VddCat"      Source="driver-assets\vdd\mttvdd.cat"            Name="mttvdd.cat" />
-            <File Id="VddSettings" Source="driver-assets\vdd\vdd_settings.xml"      Name="vdd_settings.xml" />
-            <File Id="VddLicense"  Source="driver-assets\vdd\LICENSE.txt"           Name="LICENSE.txt" />
-            <!-- Public cert of the driver publisher (SignPath Foundation).
-                 Agent adds it to TrustedPublisher at first start so pnputil
-                 installs the driver silently. -->
-            <File Id="VddCert"     Source="driver-assets\vdd\signpath-publisher.cer" Name="signpath-publisher.cer" />
-          </Component>
-        </Directory>
-
-        <!-- Amyuni usbmmidd (WHQL-signed by Microsoft Hardware Compat Publisher,
-             zlib-style redistributable license). Installed once at service
-             start via deviceinstaller64.exe; the agent hot-plugs a monitor
-             (enableidd 1) for every no-user capture session so Winlogon/
-             LogonUI content is composited onto a display the helper can see. -->
-        <Directory Id="AmyuniDir" Name="amyuni">
-          <Component Id="AmyuniFiles" Guid="B2C3D4E5-F6A7-8901-BCDE-123456780030">
-            <File Id="AmyuniInf"     Source="driver-assets\amyuni\usbmmIdd.inf"         Name="usbmmIdd.inf" />
-            <File Id="AmyuniCat"     Source="driver-assets\amyuni\usbmmidd.cat"         Name="usbmmidd.cat" />
-            <File Id="AmyuniInstall" Source="driver-assets\amyuni\deviceinstaller64.exe" Name="deviceinstaller64.exe" />
-            <File Id="AmyuniLicense" Source="driver-assets\amyuni\License.txt"          Name="License.txt" />
-          </Component>
-          <!-- usbmmIdd.inf references the DLL in an x64\ subfolder; we must
-               preserve that layout on disk or SetupAPI fails with
-               ERROR_FILE_NOT_FOUND on the driver-store copy step. -->
-          <Directory Id="AmyuniX64Dir" Name="x64">
-            <Component Id="AmyuniX64Files" Guid="C3D4E5F6-A7B8-9012-CDEF-234567890040">
-              <File Id="AmyuniDllX64" Source="driver-assets\amyuni\x64\usbmmIdd.dll" Name="usbmmIdd.dll" />
-            </Component>
-          </Directory>
-        </Directory>
 
         <!--
           Registry config: agent reads these on first run if config.json is absent.
@@ -136,9 +103,6 @@
       <ComponentRef Id="AgentExe" />
       <ComponentRef Id="AgentConfig" />
       <ComponentRef Id="CodecDLLs" />
-      <ComponentRef Id="VddFiles" />
-      <ComponentRef Id="AmyuniFiles" />
-      <ComponentRef Id="AmyuniX64Files" />
     </Feature>
 
   </Package>

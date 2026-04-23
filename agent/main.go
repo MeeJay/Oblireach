@@ -190,13 +190,6 @@ func main() {
 	// Write version file so the Obliance tray can read it.
 	_ = os.WriteFile(filepath.Join(configDir, "version.txt"), []byte(agentVersion), 0644)
 
-	// Driver setup (VDD / Amyuni) is deferred until a no-user stream
-	// actually asks for a virtual display. Running it synchronously at
-	// service start, or even asynchronously in a goroutine during
-	// START_PENDING, can push past the SCM's service-start timeout when
-	// the system already has phantom monitors or the driver store takes
-	// time to respond — causing MSI StartServices to return Error 1920
-	// and the whole install to roll back with exit 1603.
 	runFn := func() { runCmdWS(cfg) }
 
 	// Try to run as a Windows service first; fall back to interactive mode.

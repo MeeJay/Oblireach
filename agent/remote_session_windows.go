@@ -446,61 +446,19 @@ func runHelperMode(addr string) {
 	// correct WinSta/Desktop automatically from the spawning token. Doing
 	// so explicitly adds token-ACL handshakes that can block DXGI access.
 
-	// On a no-user session (running with winlogon.exe's SYSTEM token) we
-	// need a virtual display the OS will actually compose to — MttVDD's
-	// always-on permanent monitor is ignored by the compositor on
-	// Server 2022/2025 when no user is logged in. Amyuni's usbmmidd
-	// supports hot-plug: `enableidd 1` presents a fresh virtual monitor
-	// to Windows at this moment, and the compositor routes Winlogon /
-	// LogonUI / UAC rendering to it.
+	// No-user (Winlogon / sign-in / lock screen) capture works because the
+	// helper is spawned directly on winsta0\winlogon via STARTUPINFO.lpDesktop
+	// in startCrossSessionStream when the target session has no user — DXGI
+	// Desktop Duplication then runs natively against the physical display
+	// adapter (Hyper-V Video / the console's real GPU output) that has the
+	// Winlogon content already composed on it.
 	//
-	// The drivers are installed lazily on first use rather than at
-	// service startup: pre-installing from main() blocks the SCM
-	// start-timeout when the system already has phantoms, and most
-	// sessions (normal user / RDP) don't need a virtual display anyway.
-	if home, _ := os.UserHomeDir(); home != "" &&
-		(home == `C:\WINDOWS\system32\config\systemprofile` ||
-			home == `C:\Windows\system32\config\systemprofile`) {
-		// Ensure drivers are in the store. Idempotent — short path on
-		// subsequent calls once the marker file is present.
-		if err := amyuniEnsureInstalled(configDir); err != nil {
-			log.Printf("helper: amyuni lazy install: %v", err)
-		}
-		if err := vddEnsureInstalled(configDir); err != nil {
-			log.Printf("helper: vdd lazy install: %v", err)
-		}
-
-		if err := amyuniEnableMonitor(); err != nil {
-			log.Printf("helper: amyuni enable failed (falling back to MttVDD primary): %v", err)
-			vddMakePrimary()
-		} else {
-			// Disable MttVDD so it doesn't pollute the virtual-screen calc.
-			if err := vddDisable(); err != nil {
-				log.Printf("helper: vdd disable failed (non-fatal): %v", err)
-			}
-			// Let Windows enumerate the hot-plugged monitor.
-			time.Sleep(1500 * time.Millisecond)
-			// Try to force Amyuni primary. Often fails on Hyper-V VMs
-			// (ChangeDisplaySettingsEx returns DISP_CHANGE_FAILED because
-			// the Hyper-V Video console adapter won't cede the primary
-			// slot) — we attempt it but don't rely on it, since we have
-			// the desktop-switch fallback below.
-			amyuniMakePrimary()
-			time.Sleep(300 * time.Millisecond)
-			defer func() {
-				if err := amyuniDisableMonitor(); err != nil {
-					log.Printf("helper: amyuni disable failed: %v", err)
-				}
-			}()
-		}
-
-		// No SetThreadDesktop here — the service spawns this helper
-		// directly on winsta0\winlogon (STARTUPINFO.lpDesktop) for no-user
-		// sessions, so the thread is already on the right desktop. A
-		// post-hoc SetThreadDesktop would return ERROR_BUSY because the
-		// Go runtime's initialization on this thread creates desktop-
-		// scoped state that SetThreadDesktop refuses to move.
-	}
+	// We intentionally do NOT install or plug any Indirect Display Driver
+	// here: neither TeamViewer nor RustDesk do for standard pre-login
+	// capture (their IDDs are for privacy mode / headless-no-console use
+	// cases that we haven't needed to support). The entire IDD saga was
+	// chasing a distraction — the real fix was always the correct desktop
+	// at spawn time.
 
 	// ── Init capture ─────────────────────────────────────────────────────────
 	if err := captureInit(); err != nil {
