@@ -32,8 +32,10 @@ static void paintToast(HWND hwnd) {
     FillRect(hdc, &rc, bgBrush);
     DeleteObject(bgBrush);
 
-    // Left accent bar: indigo (#6366f1)
-    HBRUSH acBrush = CreateSolidBrush(RGB(99, 102, 241));
+    // Left accent bar: Oblireach red (#c2001b). Was indigo (#6366f1) — the
+    // purple came from the Obligate SSO branding; for an INCOMING Reach
+    // connection the toast should use the Oblireach accent.
+    HBRUSH acBrush = CreateSolidBrush(RGB(194, 0, 27));
     RECT acRc = {0, 0, ACCENT_W, TOAST_H};
     FillRect(hdc, &acRc, acBrush);
     DeleteObject(acBrush);

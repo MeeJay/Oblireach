@@ -457,17 +457,40 @@ func runHelperMode(addr string) {
 		return pipeSendLocked(&helperPipeMu, conn, msgType, payload)
 	}
 
-	// Ctrl+Alt+Del: keep the DEFAULT inputSASHook which calls inputSAS() in
-	// this helper process. The helper runs with LocalSystem (DuplicateTokenEx
-	// + SetTokenSessionId) IN THE TARGET SESSION, which matches RustDesk's
-	// architecture: SendSAS(FALSE) is routed by the kernel to the Winlogon
-	// of the caller's session. So calling it from the helper hits the RDP
-	// session's Winlogon directly — which Session 0's service cannot do
-	// (SAS from session 0 → the physical console's Winlogon only).
-	// Previous 1.0.175–1.0.182 piped pipeTypeSAS to the service and worked
-	// for console but not for RDP. Explicitly reset the hook in case a
-	// previous helper-mode run of this binary left it pointing to a pipe.
-	inputSASHook = inputSAS
+	// Ctrl+Alt+Del routing depends on whether this helper is running in the
+	// physical console session or an RDP session. RustDesk's logic
+	// (src/server/input_service.rs:2202-2212) is:
+	//   - console session  → IPC to the SYSTEM service and let IT call
+	//                        SendSAS(FALSE) from Session 0. Only this path
+	//                        unlocks the "Press Ctrl+Alt+Del" secure-attention
+	//                        screen of a locked console — the kernel routes
+	//                        SAS from session 0 directly into Winlogon's
+	//                        SAS dispatcher.
+	//   - RDP session      → call SendSAS(FALSE) directly in THIS helper.
+	//                        The helper runs with LocalSystem + SE_TCB in the
+	//                        RDP session, so SendSAS posts SAS to the RDP
+	//                        session's Winlogon.
+	// In 1.0.184 I mistakenly unified both on the helper path, which broke
+	// the console-unlock case (user stuck on "press CAD" screen). In
+	// 1.0.175-1.0.183 I mistakenly unified both on the service path, which
+	// broke RDP CAD (SAS from session 0 can't reach an RDP session's
+	// Winlogon). Neither is right — RustDesk's split is.
+	helperSessionID := currentSessionID()
+	cSessionID := consoleSessionID()
+	if helperSessionID == cSessionID {
+		// Console. Pipe to service.
+		inputSASHook = func() {
+			if err := pipeSendC(pipeTypeSAS, nil); err != nil {
+				log.Printf("helper: failed to pipe SAS to service: %v", err)
+			}
+		}
+		log.Printf("helper: SAS route = service pipe (console session %d)", helperSessionID)
+	} else {
+		// RDP / non-console. Call SendSAS locally in this session.
+		inputSASHook = inputSAS
+		log.Printf("helper: SAS route = local inputSAS (non-console session %d, console=%d)",
+			helperSessionID, cSessionID)
+	}
 
 	// Lock this goroutine to its OS thread for the entire helper lifetime.
 	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.

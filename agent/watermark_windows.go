@@ -3,15 +3,73 @@
 package main
 
 /*
-#cgo LDFLAGS: -lgdi32 -luser32
+#cgo LDFLAGS: -lgdi32 -luser32 -ldwmapi
 
 #include <windows.h>
+#include <dwmapi.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define WM_PILL_W 90
-#define WM_PILL_H 28
+#define WM_PILL_W 92
+#define WM_PILL_H 30
 #define WM_USER_SET_MODE (WM_USER + 1)
+
+// ── Undocumented acrylic blur (SetWindowCompositionAttribute) ───────────────
+// Produces the frosted-glass effect used by the Windows 10+ Start menu and
+// notification center. ACCENT_ENABLE_ACRYLICBLURBEHIND requires Win10 1803+;
+// we probe via GetProcAddress and fall back to DwmEnableBlurBehindWindow
+// (Win7+ Aero blur — less frosted but still translucent).
+
+typedef enum _ACCENT_STATE {
+    ACCENT_DISABLED                  = 0,
+    ACCENT_ENABLE_GRADIENT           = 1,
+    ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
+    ACCENT_ENABLE_BLURBEHIND         = 3,
+    ACCENT_ENABLE_ACRYLICBLURBEHIND  = 4,
+} ACCENT_STATE;
+
+typedef struct _ACCENT_POLICY {
+    ACCENT_STATE AccentState;
+    DWORD AccentFlags;
+    DWORD GradientColor; // ABGR when used with acrylic
+    DWORD AnimationId;
+} ACCENT_POLICY;
+
+typedef enum _WINDOWCOMPOSITIONATTRIB {
+    WCA_ACCENT_POLICY = 19,
+} WINDOWCOMPOSITIONATTRIB;
+
+typedef struct _WINDOWCOMPOSITIONATTRIBDATA {
+    WINDOWCOMPOSITIONATTRIB Attribute;
+    PVOID  pvData;
+    SIZE_T cbData;
+} WINDOWCOMPOSITIONATTRIBDATA;
+
+typedef BOOL (WINAPI *pfnSetWindowCompositionAttribute)(HWND, WINDOWCOMPOSITIONATTRIBDATA*);
+
+static void apply_acrylic(HWND hwnd) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) return;
+    pfnSetWindowCompositionAttribute swca =
+        (pfnSetWindowCompositionAttribute)GetProcAddress(user32, "SetWindowCompositionAttribute");
+    if (swca) {
+        ACCENT_POLICY ap = {0};
+        ap.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND;
+        ap.AccentFlags = 2; // draw borders
+        // ABGR: tint ~ #0d1117 at ~45% opacity → 73,0d,11,17 reversed = 0x73170E0D
+        ap.GradientColor = 0x73170E0D;
+        WINDOWCOMPOSITIONATTRIBDATA data = { WCA_ACCENT_POLICY, &ap, sizeof(ap) };
+        if (swca(hwnd, &data)) return;
+    }
+    // Fallback: Aero blur (Win7+).
+    DWM_BLURBEHIND bb = {0};
+    bb.dwFlags  = DWM_BB_ENABLE;
+    bb.fEnable  = TRUE;
+    bb.hRgnBlur = NULL;
+    DwmEnableBlurBehindWindow(hwnd, &bb);
+}
+
+#define WM_PILL_RADIUS 15 // height/2 — perfect capsule ends
 
 static HWND g_watermark = NULL;
 static HFONT g_wm_font = NULL;
@@ -27,12 +85,17 @@ static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
 
-        // Background: dark semi-transparent rounded pill
-        HBRUSH bgBr = CreateSolidBrush(RGB(20, 20, 30));
-        HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(20, 20, 30));
-        SelectObject(hdc, bgBr);
-        SelectObject(hdc, bgPen);
-        RoundRect(hdc, 0, 0, WM_PILL_W, WM_PILL_H, 14, 14);
+        // Background: thin capsule. The acrylic blur (applied once at window
+        // creation via apply_acrylic) provides the frosted-glass look; we
+        // still need a GDI fill to define the capsule shape, but keep it
+        // subtle — a near-charcoal with low chroma so the blur dominates.
+        HBRUSH bgBr = CreateSolidBrush(RGB(22, 27, 34));
+        HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(48, 54, 61));
+        HBRUSH oldBr = (HBRUSH)SelectObject(hdc, bgBr);
+        HPEN   oldPen = (HPEN)SelectObject(hdc, bgPen);
+        RoundRect(hdc, 0, 0, WM_PILL_W, WM_PILL_H, WM_PILL_RADIUS*2, WM_PILL_RADIUS*2);
+        SelectObject(hdc, oldBr);
+        SelectObject(hdc, oldPen);
         DeleteObject(bgBr);
         DeleteObject(bgPen);
 
@@ -90,7 +153,15 @@ static void show_watermark_rec(void) {
         NULL, NULL, wc.hInstance, NULL);
 
     if (g_watermark) {
-        SetLayeredWindowAttributes(g_watermark, 0, 200, LWA_ALPHA);
+        // Physically shape the window as a capsule via SetWindowRgn. Pixels
+        // outside the region are fully absent (not just alpha-blended).
+        // This is cleaner than an LWA_COLORKEY hack and plays nicely with
+        // SetWindowCompositionAttribute's acrylic blur below.
+        HRGN rgn = CreateRoundRectRgn(0, 0, WM_PILL_W + 1, WM_PILL_H + 1,
+            WM_PILL_RADIUS * 2, WM_PILL_RADIUS * 2);
+        SetWindowRgn(g_watermark, rgn, TRUE);
+        SetLayeredWindowAttributes(g_watermark, 0, 230, LWA_ALPHA);
+        apply_acrylic(g_watermark);
     }
 }
 
