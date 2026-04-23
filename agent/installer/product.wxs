@@ -96,12 +96,31 @@
                          Name="ApiKey"    Type="string" Value="[APIKEY]" />
         </Component>
 
+        <!--
+          SoftwareSASGeneration = 1 (services only). Required for SendSAS()
+          to actually produce the secure-desktop transition when the agent
+          relays a Ctrl+Alt+Del from the operator. Without this key, SendSAS
+          returns TRUE but silently no-ops. RustDesk sets the same policy
+          via a deferred CustomAction (AddRegSoftwareSASGeneration) — WiX's
+          native RegistryValue element is simpler and equally effective.
+          Values: 0 none, 1 services only, 2 ease-of-access, 3 both.
+          NeverOverwrite="yes" respects GPOs that chose 3.
+        -->
+        <Component Id="SASPolicy" Guid="A1B2C3D4-E5F6-7890-1234-012345670003"
+                   NeverOverwrite="yes">
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+                         Name="SoftwareSASGeneration"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+
       </Directory>
     </StandardDirectory>
 
     <Feature Id="Main">
       <ComponentRef Id="AgentExe" />
       <ComponentRef Id="AgentConfig" />
+      <ComponentRef Id="SASPolicy" />
       <ComponentRef Id="CodecDLLs" />
     </Feature>
 

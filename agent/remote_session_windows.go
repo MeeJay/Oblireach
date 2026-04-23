@@ -345,6 +345,7 @@ const (
 	pipeTypeH265Frame = byte(0x08) // helper → service: H.265 frame data
 	pipeTypeAV1Frame  = byte(0x09) // helper → service: AV1 frame data
 	pipeTypeAudioData = byte(0x0A) // helper → service: audio PCM data
+	pipeTypeSAS       = byte(0x0B) // helper → service: request SendSAS (Ctrl+Alt+Del). Must fire from Session 0.
 )
 
 func pipeSend(w io.Writer, msgType byte, payload []byte) error {
@@ -429,6 +430,17 @@ func runHelperMode(addr string) {
 		log.Fatalf("helper: could not connect to service: %v", err)
 	}
 	defer conn.Close()
+
+	// Route Ctrl+Alt+Del back to the service. SendSAS from here (Session N,
+	// SYSTEM token) returns TRUE but the secure desktop never appears —
+	// Windows requires the call from Session 0. The service (SCM-launched,
+	// LocalSystem, Session 0) handles pipeTypeSAS by invoking inputSAS()
+	// directly. Same IPC pattern as RustDesk's ipc::Data::SAS.
+	inputSASHook = func() {
+		if err := pipeSend(conn, pipeTypeSAS, nil); err != nil {
+			log.Printf("helper: failed to pipe SAS request to service: %v", err)
+		}
+	}
 
 	// Lock this goroutine to its OS thread for the entire helper lifetime.
 	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.
@@ -950,6 +962,13 @@ func (s *StreamSession) runCrossSession(ln net.Listener) {
 				log.Printf("Stream %s: send control to browser failed: %v", s.token, err)
 				return
 			}
+		} else if msgType == pipeTypeSAS {
+			// Helper asked the service to trigger SendSAS. Must fire from
+			// Session 0 (the Windows service) for the Secure Attention Sequence
+			// to actually produce the secure-desktop transition — calling
+			// SendSAS from the helper (Session N, SYSTEM token) returns TRUE
+			// but silently no-ops. Mirrors RustDesk's ipc::Data::SAS flow.
+			inputSAS()
 		} else if msgType == pipeTypeAudioData {
 			// Audio data from helper → forward as WS binary to browser
 			frame := make([]byte, 1+len(payload))

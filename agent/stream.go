@@ -719,7 +719,7 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 			(msg.Key == "Delete" || msg.Key == "Del" || msg.Key == "End" ||
 				msg.Code == "Delete" || msg.Code == "Del" || msg.Code == "End" ||
 				msg.Code == "NumpadDecimal") {
-			inputSAS()
+			inputSASHook()
 			break
 		}
 		// Try layout-aware mapping from e.key first (handles AZERTY, QWERTZ, etc.)
@@ -747,7 +747,7 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 
 	case "sas":
 		// Secure Attention Sequence (Ctrl+Alt+Del)
-		inputSAS()
+		inputSASHook()
 
 	case "resize_viewport":
 		// No action needed — we capture at native resolution
@@ -758,6 +758,13 @@ func dispatchInputJSON(payload []byte, screenW, screenH int) {
 func (s *StreamSession) handleInput(payload []byte, screenW, screenH int) {
 	dispatchInputJSON(payload, screenW, screenH)
 }
+
+// inputSASHook is called when the operator presses Ctrl+Alt+Del. Defaults to
+// invoking SendSAS locally — correct for the service process (Session 0).
+// The helper process overrides this in runHelperMode to pipe the request back
+// to the service instead, because SendSAS from Session N with a SYSTEM token
+// returns success but produces no secure-desktop transition.
+var inputSASHook = inputSAS
 
 // codeToVK maps a browser KeyboardEvent.code string to a Windows VK_ code.
 // Only covers common keys; extend as needed.

@@ -346,8 +346,20 @@ func inputKey(vk int, down bool) {
 }
 
 // inputSAS sends a Secure Attention Sequence (Ctrl+Alt+Del).
-// Requires the process to run as SYSTEM (service or helper spawned with SYSTEM token).
+// Must be called from the Session 0 service process: SendSAS from Session N
+// (even with a SYSTEM token) returns TRUE but no secure-desktop transition
+// occurs. The helper redirects here via pipeTypeSAS.
+//
+// Also defensively ensures HKLM\...\Policies\System!SoftwareSASGeneration is
+// set to 1 (or 3) — if it's 0 or missing, SendSAS silently no-ops. We flip
+// it for the call and restore after. Same belt-and-suspenders pattern as
+// RustDesk's send_sas() in src/platform/windows.rs.
 func inputSAS() {
+	origValue, origPresent, restore := ensureSASPolicy()
+	defer restore()
+	_ = origValue
+	_ = origPresent
+
 	dll := syscall.NewLazyDLL("sas.dll")
 	proc := dll.NewProc("SendSAS")
 	findErr := proc.Find()
@@ -355,8 +367,177 @@ func inputSAS() {
 		logInputEvent(fmt.Sprintf("SAS: sas.dll SendSAS unavailable: %v", findErr))
 		return
 	}
-	r1, _, callErr := proc.Call(0) // FALSE = software SAS
+	r1, _, callErr := proc.Call(0) // FALSE = called from service (not user)
 	logInputEvent(fmt.Sprintf("SAS: SendSAS(FALSE) → r1=%d err=%v", r1, callErr))
+}
+
+// ensureSASPolicy reads HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System!SoftwareSASGeneration,
+// promotes it to 1 if needed, and returns a restore func that writes back the
+// original value (or deletes it if originally absent). Returns (origValue,
+// origPresent, restore). origValue is meaningless when origPresent is false.
+//
+// Values: 0 = none, 1 = services only, 2 = ease-of-access only, 3 = both.
+// SendSAS requires 1 or 3.
+func ensureSASPolicy() (uint32, bool, func()) {
+	const subKey = `Software\Microsoft\Windows\CurrentVersion\Policies\System`
+	const valName = "SoftwareSASGeneration"
+
+	k, _, err := registryCreateKey(subKey)
+	if err != nil {
+		logInputEvent(fmt.Sprintf("SAS: open policy key failed: %v", err))
+		return 0, false, func() {}
+	}
+	defer registryCloseKey(k)
+
+	orig, present, _ := registryGetDWORD(k, valName)
+	if present && (orig == 1 || orig == 3) {
+		return orig, true, func() {} // already allowed, nothing to do
+	}
+	if err := registrySetDWORD(k, valName, 1); err != nil {
+		logInputEvent(fmt.Sprintf("SAS: set SoftwareSASGeneration=1 failed: %v", err))
+		return orig, present, func() {}
+	}
+	logInputEvent(fmt.Sprintf("SAS: temporarily set SoftwareSASGeneration 0x%x→1 (was present=%v)", orig, present))
+	return orig, present, func() {
+		kk, _, err := registryOpenKey(subKey)
+		if err != nil {
+			return
+		}
+		defer registryCloseKey(kk)
+		if present {
+			_ = registrySetDWORD(kk, valName, orig)
+		} else {
+			_ = registryDeleteValue(kk, valName)
+		}
+	}
+}
+
+// ── Minimal registry helpers (syscall → advapi32) ───────────────────────────
+// Used by ensureSASPolicy to flip SoftwareSASGeneration. Kept inline to avoid
+// a go.mod bump for golang.org/x/sys/windows/registry.
+
+const (
+	_HKEY_LOCAL_MACHINE   = 0x80000002
+	_KEY_READ             = 0x20019
+	_KEY_SET_VALUE        = 0x0002
+	_REG_DWORD            = 4
+	_REG_OPTION_NON_VOLATILE = 0
+)
+
+var (
+	advapi32                = syscall.NewLazyDLL("advapi32.dll")
+	procRegCreateKeyExW     = advapi32.NewProc("RegCreateKeyExW")
+	procRegOpenKeyExW       = advapi32.NewProc("RegOpenKeyExW")
+	procRegCloseKey         = advapi32.NewProc("RegCloseKey")
+	procRegQueryValueExW    = advapi32.NewProc("RegQueryValueExW")
+	procRegSetValueExW      = advapi32.NewProc("RegSetValueExW")
+	procRegDeleteValueW     = advapi32.NewProc("RegDeleteValueW")
+)
+
+func registryCreateKey(subKey string) (uintptr, bool, error) {
+	p, err := syscall.UTF16PtrFromString(subKey)
+	if err != nil {
+		return 0, false, err
+	}
+	var hKey uintptr
+	var disp uint32
+	r, _, callErr := procRegCreateKeyExW.Call(
+		uintptr(_HKEY_LOCAL_MACHINE),
+		uintptr(unsafe.Pointer(p)),
+		0, 0,
+		uintptr(_REG_OPTION_NON_VOLATILE),
+		uintptr(_KEY_READ|_KEY_SET_VALUE),
+		0,
+		uintptr(unsafe.Pointer(&hKey)),
+		uintptr(unsafe.Pointer(&disp)),
+	)
+	if r != 0 {
+		return 0, false, fmt.Errorf("RegCreateKeyExW: %v (code=%d)", callErr, r)
+	}
+	return hKey, disp == 1, nil // disp=1 = REG_CREATED_NEW_KEY
+}
+
+func registryOpenKey(subKey string) (uintptr, bool, error) {
+	p, err := syscall.UTF16PtrFromString(subKey)
+	if err != nil {
+		return 0, false, err
+	}
+	var hKey uintptr
+	r, _, callErr := procRegOpenKeyExW.Call(
+		uintptr(_HKEY_LOCAL_MACHINE),
+		uintptr(unsafe.Pointer(p)),
+		0,
+		uintptr(_KEY_READ|_KEY_SET_VALUE),
+		uintptr(unsafe.Pointer(&hKey)),
+	)
+	if r != 0 {
+		return 0, false, fmt.Errorf("RegOpenKeyExW: %v (code=%d)", callErr, r)
+	}
+	return hKey, true, nil
+}
+
+func registryCloseKey(hKey uintptr) {
+	procRegCloseKey.Call(hKey)
+}
+
+func registryGetDWORD(hKey uintptr, name string) (uint32, bool, error) {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return 0, false, err
+	}
+	var regType uint32
+	var data uint32
+	size := uint32(4)
+	r, _, _ := procRegQueryValueExW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(p)),
+		0,
+		uintptr(unsafe.Pointer(&regType)),
+		uintptr(unsafe.Pointer(&data)),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if r != 0 {
+		return 0, false, nil // missing value — not an error for our use
+	}
+	if regType != _REG_DWORD {
+		return 0, false, fmt.Errorf("value is not REG_DWORD (type=%d)", regType)
+	}
+	return data, true, nil
+}
+
+func registrySetDWORD(hKey uintptr, name string, value uint32) error {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	v := value
+	r, _, callErr := procRegSetValueExW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(p)),
+		0,
+		uintptr(_REG_DWORD),
+		uintptr(unsafe.Pointer(&v)),
+		4,
+	)
+	if r != 0 {
+		return fmt.Errorf("RegSetValueExW: %v (code=%d)", callErr, r)
+	}
+	return nil
+}
+
+func registryDeleteValue(hKey uintptr, name string) error {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	r, _, callErr := procRegDeleteValueW.Call(
+		hKey,
+		uintptr(unsafe.Pointer(p)),
+	)
+	if r != 0 {
+		return fmt.Errorf("RegDeleteValueW: %v (code=%d)", callErr, r)
+	}
+	return nil
 }
 
 // logInputEvent writes a short line to the shared input log so we can trace
