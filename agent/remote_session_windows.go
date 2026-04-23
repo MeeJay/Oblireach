@@ -106,8 +106,24 @@ static HANDLE openSessionSystemToken(DWORD dwSessionId, DWORD *outDiag, DWORD *o
 // 2=SetTokenSessionId fallback. outDiag/outErr/outWlPid expose why winlogon
 // path was skipped when strategy=2. Returns 0 on success, negative
 // GetLastError() on failure.
+// desktopName parameter: if non-NULL, passed to STARTUPINFO.lpDesktop so
+// the child process is created directly on that desktop (e.g.
+// "winsta0\\winlogon" for capturing the sign-in UI). NULL falls back to
+// "winsta0\\default". Starting the helper on winlogon desktop is the
+// only way to make Magnification capture the login prompt — once a
+// thread has any window on one desktop, SetThreadDesktop refuses to
+// move it (ERROR_BUSY, 170).
+static int spawnInSessionOnDesktop(DWORD sessionId, wchar_t *cmdLine, wchar_t *desktopName,
+		DWORD *outPID, DWORD *outStrategy, DWORD *outDiag, DWORD *outErr, DWORD *outWlPid);
+
 static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 		DWORD *outStrategy, DWORD *outDiag, DWORD *outErr, DWORD *outWlPid) {
+	return spawnInSessionOnDesktop(sessionId, cmdLine, NULL,
+		outPID, outStrategy, outDiag, outErr, outWlPid);
+}
+
+static int spawnInSessionOnDesktop(DWORD sessionId, wchar_t *cmdLine, wchar_t *desktopName,
+		DWORD *outPID, DWORD *outStrategy, DWORD *outDiag, DWORD *outErr, DWORD *outWlPid) {
 	HANDLE hToken = NULL;
 	*outStrategy = 255;
 	*outDiag = 0; *outErr = 0; *outWlPid = 0;
@@ -208,7 +224,7 @@ static int spawnInSession(DWORD sessionId, wchar_t *cmdLine, DWORD *outPID,
 	STARTUPINFOW si;
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
-	si.lpDesktop = L"winsta0\\default";
+	si.lpDesktop = desktopName ? desktopName : L"winsta0\\default";
 	// Explicit desktop = put the child on the interactive desktop of the
 	// target session. With lpDesktop=NULL Windows derives it from the
 	// spawning token's logon-session defaults, which for a SYSTEM-crafted
@@ -478,16 +494,12 @@ func runHelperMode(addr string) {
 			}()
 		}
 
-		// Attach this thread to the active input desktop before captureInit
-		// creates the Magnifier windows. On a no-user session the active
-		// desktop is WinSta0\Winlogon (where LogonUI renders the sign-in
-		// prompt). The Magnification API captures whatever is on the
-		// caller thread's desktop — if we stay on WinSta0\Default (where
-		// the process spawns) we capture an empty desktop and get black
-		// frames. Moving here, BEFORE any window is created on this
-		// thread, avoids the ERROR_BUSY that SetThreadDesktop would return
-		// once magnifier/host windows exist on the initial desktop.
-		inputSwitchActiveDesktop()
+		// No SetThreadDesktop here — the service spawns this helper
+		// directly on winsta0\winlogon (STARTUPINFO.lpDesktop) for no-user
+		// sessions, so the thread is already on the right desktop. A
+		// post-hoc SetThreadDesktop would return ERROR_BUSY because the
+		// Go runtime's initialization on this thread creates desktop-
+		// scoped state that SetThreadDesktop refuses to move.
 	}
 
 	// ── Init capture ─────────────────────────────────────────────────────────
@@ -831,10 +843,30 @@ func startCrossSessionStream(cfg *Config, token string, sessionID int) error {
 		ln.Close()
 		return fmt.Errorf("cross-session: utf16: %w", err)
 	}
+
+	// Pre-flight: detect whether the target session has a logged-in user.
+	// If not, spawn the helper directly on WinSta0\Winlogon so the
+	// Magnification API in the helper process sees the sign-in UI (which
+	// lives on that desktop) rather than an empty Default desktop.
+	var desktopW *uint16
+	{
+		hasUser := false
+		for _, s := range enumerateSessions() {
+			if s.ID == sessionID && s.Username != "" {
+				hasUser = true
+				break
+			}
+		}
+		if !hasUser {
+			desktopW, _ = syscall.UTF16PtrFromString(`winsta0\winlogon`)
+		}
+	}
+
 	var pid, strategy, diag, errCode, wlPid C.DWORD
-	rc := C.spawnInSession(
+	rc := C.spawnInSessionOnDesktop(
 		C.DWORD(sessionID),
 		(*C.wchar_t)(unsafe.Pointer(cmdLineW)),
+		(*C.wchar_t)(unsafe.Pointer(desktopW)),
 		&pid, &strategy, &diag, &errCode, &wlPid,
 	)
 	if rc != 0 {
