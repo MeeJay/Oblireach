@@ -516,8 +516,18 @@ static volatile int    g_cap_init_ok     = 0;  // last init succeeded
 static HANDLE          g_cap_thread_h    = NULL;
 static CRITICAL_SECTION g_cap_frame_cs;
 static int             g_cap_cs_ready    = 0;
-static HANDLE          g_cap_frame_evt   = NULL;
-static unsigned char  *g_cap_shared      = NULL;
+// Double buffer: the native capture thread writes into g_cap_write_buf (no
+// lock — nobody else touches it), then on successful frame swaps pointers
+// under g_cap_frame_cs so Go's cap_fetch reads a coherent buffer. Lock is
+// held ONLY for the pointer swap (nanoseconds) in the thread, and for the
+// memcpy during fetch (5-10ms for a 14MB 2552×1348 BGRA frame). The
+// previous design in 1.0.184 held the lock during the entire capture_frame
+// (30ms+) which starved Go's fetch and produced the 10-second latency
+// build-up the user saw.
+static unsigned char  *g_cap_buf_a       = NULL;
+static unsigned char  *g_cap_buf_b       = NULL;
+static unsigned char  *g_cap_write_buf   = NULL; // back buffer — thread writes here
+static unsigned char  *g_cap_read_buf    = NULL; // front buffer — latest complete frame
 static int             g_cap_shared_w    = 0;
 static int             g_cap_shared_h    = 0;
 static int             g_cap_shared_ox   = 0;
@@ -547,17 +557,19 @@ static void cap_thread_follow_input_desktop(void) {
     // desktop is unsafe and the leak is bounded by desktop transitions (rare).
 }
 
-// Resize the shared buffer to match current capture dimensions. Called on
-// init and after monitor switch.
+// Resize the double-buffer pair to match current capture dimensions. Called
+// on init and after monitor switch. Must be called with g_cap_frame_cs held
+// because it reassigns the read/write pointer pair atomically.
 static void cap_resize_shared_locked(void) {
     int need = g_width * g_height * 4;
     if (need <= 0) return;
-    if (g_cap_shared_w == g_width && g_cap_shared_h == g_height && g_cap_shared) return;
-    unsigned char *nb = (unsigned char*)malloc(need);
-    if (!nb) return;
-    memset(nb, 0, need);
-    if (g_cap_shared) free(g_cap_shared);
-    g_cap_shared    = nb;
+    if (g_cap_shared_w == g_width && g_cap_shared_h == g_height && g_cap_buf_a) return;
+    if (g_cap_buf_a) { free(g_cap_buf_a); g_cap_buf_a = NULL; }
+    if (g_cap_buf_b) { free(g_cap_buf_b); g_cap_buf_b = NULL; }
+    g_cap_buf_a = (unsigned char*)calloc(1, need);
+    g_cap_buf_b = (unsigned char*)calloc(1, need);
+    g_cap_write_buf = g_cap_buf_a;
+    g_cap_read_buf  = g_cap_buf_b;
     g_cap_shared_w  = g_width;
     g_cap_shared_h  = g_height;
     g_cap_shared_ox = g_mon_x;
@@ -566,10 +578,14 @@ static void cap_resize_shared_locked(void) {
 
 static DWORD WINAPI capture_thread_proc(LPVOID arg) {
     (void)arg;
-    while (InterlockedCompareExchange(&g_cap_running, 1, 1) == 1) {
-        if (InterlockedCompareExchange(&g_cap_restart, 0, 1) == 1) {
+    while (g_cap_running) {
+        if (g_cap_restart) {
+            g_cap_restart = 0;
             capture_close();
-            int rc = capture_init_monitor(g_cap_want_mon);
+            // Use capture_init_best on init — it iterates every enumerated
+            // output and picks the first that supports DXGI duplication,
+            // matching the behaviour of the pre-1.0.184 captureInit path.
+            int rc = capture_init_best();
             if (rc < 0) {
                 g_cap_init_ok = 0;
             } else {
@@ -584,13 +600,11 @@ static DWORD WINAPI capture_thread_proc(LPVOID arg) {
 
         if (!g_cap_init_ok) { Sleep(20); continue; }
 
-        // Capture directly into the shared buffer under the frame lock.
-        // capture_frame does an internal memcpy row-by-row so holding the
-        // lock for the whole call is simpler than a double-buffer scheme and
-        // still keeps fetch_latest_frame waiters unblocked (~10-30ms).
-        EnterCriticalSection(&g_cap_frame_cs);
-        int ret = (g_cap_shared != NULL) ? capture_frame(g_cap_shared) : -1;
-        LeaveCriticalSection(&g_cap_frame_cs);
+        // Capture into the BACK buffer — no lock needed, this thread is the
+        // only writer to g_cap_write_buf. capture_frame's internal 33ms DXGI
+        // timeout paces this naturally at ~30 Hz.
+        unsigned char *write_target = g_cap_write_buf;
+        int ret = (write_target != NULL) ? capture_frame(write_target) : -1;
 
         if (ret == 1) { continue; }   // DXGI_ERROR_WAIT_TIMEOUT, no new frame
         if (ret < 0) {
@@ -600,8 +614,8 @@ static DWORD WINAPI capture_thread_proc(LPVOID arg) {
             // This thread has no windows so SetThreadDesktop actually works.
             capture_close();
             cap_thread_follow_input_desktop();
-            int rc = capture_reinit_current();
-            if (rc < 0) {
+            int rcReinit = capture_reinit_current();
+            if (rcReinit < 0) {
                 // Can't re-init right now (no rights, or adapter busy).
                 // Brief back-off; next tick will retry.
                 Sleep(250);
@@ -613,8 +627,14 @@ static DWORD WINAPI capture_thread_proc(LPVOID arg) {
             continue;
         }
 
+        // Frame captured. Flip the read/write buffers — lock held only for
+        // the pointer swap so fetchers aren't blocked by the capture cost.
+        EnterCriticalSection(&g_cap_frame_cs);
+        unsigned char *tmp  = g_cap_read_buf;
+        g_cap_read_buf      = g_cap_write_buf;
+        g_cap_write_buf     = tmp;
+        LeaveCriticalSection(&g_cap_frame_cs);
         InterlockedIncrement(&g_cap_frame_seq);
-        SetEvent(g_cap_frame_evt);
     }
     return 0;
 }
@@ -627,9 +647,6 @@ static int cap_start(int monitor_idx) {
     if (!g_cap_cs_ready) {
         InitializeCriticalSection(&g_cap_frame_cs);
         g_cap_cs_ready = 1;
-    }
-    if (!g_cap_frame_evt) {
-        g_cap_frame_evt = CreateEvent(NULL, FALSE, FALSE, NULL);
     }
     g_cap_want_mon  = monitor_idx;
     g_cap_restart   = 1;
@@ -645,7 +662,7 @@ static int cap_start(int monitor_idx) {
 static int cap_request_monitor(int monitor_idx) {
     g_cap_want_mon  = monitor_idx;
     g_cap_init_done = 0;
-    InterlockedExchange(&g_cap_restart, 1);
+    g_cap_restart   = 1;
     for (int i = 0; i < 500 && !g_cap_init_done; i++) Sleep(10);
     return g_cap_init_ok ? 0 : -2;
 }
@@ -660,29 +677,31 @@ static void cap_stop(void) {
     capture_close();
     if (g_cap_cs_ready) {
         EnterCriticalSection(&g_cap_frame_cs);
-        if (g_cap_shared) { free(g_cap_shared); g_cap_shared = NULL; }
+        if (g_cap_buf_a) { free(g_cap_buf_a); g_cap_buf_a = NULL; }
+        if (g_cap_buf_b) { free(g_cap_buf_b); g_cap_buf_b = NULL; }
+        g_cap_write_buf = NULL;
+        g_cap_read_buf  = NULL;
         g_cap_shared_w = g_cap_shared_h = 0;
         LeaveCriticalSection(&g_cap_frame_cs);
     }
-    if (g_cap_frame_evt) { CloseHandle(g_cap_frame_evt); g_cap_frame_evt = NULL; }
 }
 
-// Read the latest frame from the shared buffer. Returns:
-//   0 = new frame copied into out_bgra
-//   1 = no new frame since last call (should also try again)
-//  <0 = error / not initialised
+// Read the latest frame from the shared read buffer. Non-blocking: if no
+// new frame since the last call, returns 1 immediately so the Go main loop
+// can skip encoding this tick and stay responsive. The frame-ticker in
+// runHelperMode already provides the 30 Hz cadence — a WaitForSingleObject
+// in here (1.0.184) just added up-to-50ms of extra latency per tick with
+// nothing gained.
 static int cap_fetch(unsigned char *out_bgra, int out_size, int *out_w, int *out_h) {
-    // Short wait for a frame if none has arrived since last call.
-    WaitForSingleObject(g_cap_frame_evt, 50);
     LONG cur = InterlockedCompareExchange(&g_cap_frame_seq, 0, 0);
     if (cur == g_cap_last_read) return 1;
     EnterCriticalSection(&g_cap_frame_cs);
     int need = g_cap_shared_w * g_cap_shared_h * 4;
-    if (!g_cap_shared || out_size < need) {
+    if (!g_cap_read_buf || out_size < need) {
         LeaveCriticalSection(&g_cap_frame_cs);
         return -1;
     }
-    memcpy(out_bgra, g_cap_shared, need);
+    memcpy(out_bgra, g_cap_read_buf, need);
     *out_w = g_cap_shared_w;
     *out_h = g_cap_shared_h;
     g_cap_last_read = cur;
