@@ -383,6 +383,16 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
 .hide{display:none !important}
 .section-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
 .muted-hint{font-size:11px;color:var(--muted)}
+
+/* ── Update banner ── */
+.update-banner{display:none;align-items:center;gap:12px;padding:8px 18px;background:linear-gradient(90deg,rgba(194,0,27,.15),rgba(194,0,27,.06));border-bottom:1px solid rgba(194,0,27,.3);font-size:12px;color:var(--text);flex-shrink:0}
+.update-banner.visible{display:flex}
+.update-banner .ub-icon{width:24px;height:24px;border-radius:6px;background:rgba(194,0,27,.18);color:var(--accent-l);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.update-banner .ub-text{flex:1;line-height:1.4}
+.update-banner .ub-text .ub-title{font-weight:600}
+.update-banner .ub-text .ub-sub{color:var(--muted);font-size:11px}
+.update-banner .btn-primary{padding:6px 14px;font-size:12px;border-radius:10px}
+.update-banner .btn-ghost{padding:6px 12px;font-size:12px}
 </style>
 </head>
 <body>
@@ -467,6 +477,17 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
         </div>
       </div>
     </span>
+  </div>
+  <div class="update-banner" id="update-banner">
+    <div class="ub-icon">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </div>
+    <div class="ub-text">
+      <div class="ub-title">Update available — <span id="ub-version">v?</span></div>
+      <div class="ub-sub" id="ub-sub">A newer version of Oblireach is ready to install.</div>
+    </div>
+    <button class="btn-ghost" id="ub-dismiss">Later</button>
+    <button class="btn-primary" id="ub-download">Download update</button>
   </div>
   <div class="main">
     <div class="nav-rail" id="nav-rail"></div>
@@ -802,6 +823,7 @@ async function enterApp() {
   buildNavRail();
   navigateTo('dashboard');
   initSocketIO();
+  startUpdateChecker();
 }
 
 // ── Data loading ─────────────────────────────────────────────────────────────
@@ -1004,6 +1026,82 @@ document.addEventListener('click', e => {
   if (!e.target.closest('#user-menu-trigger')) document.getElementById('user-menu')?.classList.remove('open');
 });
 document.getElementById('user-menu-settings').addEventListener('click', () => navigateTo('settings'));
+
+// ── Update checker ───────────────────────────────────────────────────────────
+let updateInfo = null;       // latest version info from /api/oblireach-desktop/version
+let updateCheckInterval = null;
+
+function cmpSemver(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+async function checkForUpdate() {
+  try {
+    const r = await fetch('/proxy/api/oblireach-desktop/version');
+    if (!r.ok) return;
+    const d = await r.json();
+    const info = d.data || d;
+    if (!info || !info.version) return;
+    updateInfo = info;
+    const cur = window.__reach_version || '0.0.0';
+    if (cmpSemver(info.version, cur) <= 0) { hideUpdateBanner(); return; }
+    // Respect per-version dismissal so the banner doesn't pester the user every hour.
+    const dismissed = localStorage.getItem('oblireach_dismissed_update');
+    if (dismissed === info.version) return;
+    showUpdateBanner(info);
+  } catch {}
+}
+
+function showUpdateBanner(info) {
+  const el = document.getElementById('update-banner');
+  if (!el) return;
+  document.getElementById('ub-version').textContent = 'v' + info.version;
+  const sub = document.getElementById('ub-sub');
+  if (info.releaseNotes) {
+    const oneLine = String(info.releaseNotes).split(/\r?\n/).find(l => l.trim()) || '';
+    sub.textContent = oneLine.slice(0, 120);
+  } else {
+    sub.textContent = 'A newer version of Oblireach is ready to install.';
+  }
+  el.classList.add('visible');
+}
+
+function hideUpdateBanner() {
+  document.getElementById('update-banner')?.classList.remove('visible');
+}
+
+document.getElementById('ub-dismiss').addEventListener('click', () => {
+  if (updateInfo?.version) localStorage.setItem('oblireach_dismissed_update', updateInfo.version);
+  hideUpdateBanner();
+});
+
+document.getElementById('ub-download').addEventListener('click', async () => {
+  if (!updateInfo?.downloadUrl) return;
+  // Resolve relative downloadUrl against configured server, then hand off to the OS browser.
+  let abs = updateInfo.downloadUrl;
+  if (abs.startsWith('/')) {
+    try {
+      const cfgR = await fetch('/local/config');
+      const cfg = await cfgR.json();
+      if (cfg.serverUrl) abs = cfg.serverUrl.replace(/\/$/, '') + abs;
+    } catch {}
+  }
+  try {
+    await fetch('/local/open-url?url=' + encodeURIComponent(abs));
+  } catch {}
+});
+
+function startUpdateChecker() {
+  if (updateCheckInterval) return;
+  checkForUpdate(); // immediate check on launch
+  updateCheckInterval = setInterval(checkForUpdate, 60 * 60 * 1000); // hourly
+}
 
 // ── Dashboard page ───────────────────────────────────────────────────────────
 function renderDashboardPage(pc) {
@@ -1307,7 +1405,7 @@ function renderProfileSection(sb) {
   const b = panel.querySelector('#profile-body');
   b.innerHTML =
     '<div class="setting-row"><div class="setting-label"><div class="title">' + esc(currentOperatorName || 'Operator') + '</div><div class="sub" id="prof-email">-</div></div>' +
-    '<div class="setting-control"><span id="prof-avatar" style="display:inline-block;width:44px;height:44px;border-radius:50%;background:var(--accent);text-align:center;line-height:44px;color:white;font-weight:700">' + esc((currentOperatorName || '?').slice(0,2).toUpperCase()) + '</span></div></div>' +
+    '<div class="setting-control"><span id="prof-avatar" style="display:inline-block;width:44px;height:44px;border-radius:50%%;background:var(--accent);text-align:center;line-height:44px;color:white;font-weight:700">' + esc((currentOperatorName || '?').slice(0,2).toUpperCase()) + '</span></div></div>' +
     '<div class="setting-row"><div class="setting-label"><div class="title">Display name</div><div class="sub" id="prof-display">-</div></div></div>' +
     '<div class="setting-row"><div class="setting-label"><div class="title">Role</div><div class="sub" id="prof-role">-</div></div></div>' +
     '<div class="setting-row"><div class="setting-label"><div class="title">Authentication</div><div class="sub" id="prof-auth">-</div></div><div class="setting-control" id="prof-auth-action"></div></div>';
@@ -1315,7 +1413,7 @@ function renderProfileSection(sb) {
   api('GET', '/api/auth/me').then(r => r.json()).then(d => {
     const u = (d?.data?.user) || d?.data || {};
     if (u.profilePicture || u.profile_picture || u.avatar) {
-      b.querySelector('#prof-avatar').innerHTML = '<img src="' + (u.profilePicture || u.profile_picture || u.avatar) + '" style="width:44px;height:44px;border-radius:50%;object-fit:cover"/>';
+      b.querySelector('#prof-avatar').innerHTML = '<img src="' + (u.profilePicture || u.profile_picture || u.avatar) + '" style="width:44px;height:44px;border-radius:50%%;object-fit:cover"/>';
     }
     b.querySelector('#prof-email').textContent = u.email || '-';
     b.querySelector('#prof-display').textContent = u.displayName || u.display_name || u.username || '-';
@@ -1346,7 +1444,7 @@ function renderTrustedIpsSection(sb) {
       const trustedUntil = it.trustedUntil || it.trusted_until;
       const remaining = trustedUntil ? Math.max(0, new Date(trustedUntil).getTime() - Date.now()) : 0;
       const mins = Math.floor(remaining / 60000);
-      const exp = mins > 60 ? Math.round(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm';
+      const exp = mins > 60 ? Math.round(mins / 60) + 'h ' + (mins %% 60) + 'm' : mins + 'm';
       row.innerHTML = '<span class="ipv">' + esc(it.ip) + '</span><span class="exp">expires in ' + esc(exp) + '</span><span class="spacer"></span>' +
         '<button class="btn-ghost">Revoke</button>';
       row.querySelector('button').addEventListener('click', async () => {

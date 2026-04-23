@@ -457,16 +457,17 @@ func runHelperMode(addr string) {
 		return pipeSendLocked(&helperPipeMu, conn, msgType, payload)
 	}
 
-	// Route Ctrl+Alt+Del back to the service. SendSAS from here (Session N,
-	// SYSTEM token) returns TRUE but the secure desktop never appears —
-	// Windows requires the call from Session 0. The service (SCM-launched,
-	// LocalSystem, Session 0) handles pipeTypeSAS by invoking inputSAS()
-	// directly. Same IPC pattern as RustDesk's ipc::Data::SAS.
-	inputSASHook = func() {
-		if err := pipeSendC(pipeTypeSAS, nil); err != nil {
-			log.Printf("helper: failed to pipe SAS request to service: %v", err)
-		}
-	}
+	// Ctrl+Alt+Del: keep the DEFAULT inputSASHook which calls inputSAS() in
+	// this helper process. The helper runs with LocalSystem (DuplicateTokenEx
+	// + SetTokenSessionId) IN THE TARGET SESSION, which matches RustDesk's
+	// architecture: SendSAS(FALSE) is routed by the kernel to the Winlogon
+	// of the caller's session. So calling it from the helper hits the RDP
+	// session's Winlogon directly — which Session 0's service cannot do
+	// (SAS from session 0 → the physical console's Winlogon only).
+	// Previous 1.0.175–1.0.182 piped pipeTypeSAS to the service and worked
+	// for console but not for RDP. Explicitly reset the hook in case a
+	// previous helper-mode run of this binary left it pointing to a pipe.
+	inputSASHook = inputSAS
 
 	// Lock this goroutine to its OS thread for the entire helper lifetime.
 	// COM/DXGI/WMF require all calls on the same thread where CoInitializeEx ran.

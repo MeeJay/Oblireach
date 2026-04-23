@@ -216,10 +216,22 @@ static void switch_to_active_desktop(void) {
     if (t_currentDesk) CloseDesktop(t_currentDesk);
     t_currentDesk = inputDesk;
     g_currentDesk = inputDesk;
+
+    // Log only when the transition target changed vs. what we last attempted
+    // (or the outcome differs). Otherwise a stuck Secure-Desktop loop would
+    // emit one log per force_switch_active_desktop call from the capture
+    // reinit path — unhelpful noise.
+    static __thread char t_lastAttempt[128] = {0};
+    static __thread BOOL t_lastOk = -1;
+    if (strncmp(inputName, t_lastAttempt, sizeof(t_lastAttempt)) != 0 || t_lastOk != ok) {
+        inputLog("switch_desk: transition '%s' → '%s' (SetThreadDesktop ok=%d err=%lu)",
+            threadName, inputName, ok, setErr);
+        strncpy(t_lastAttempt, inputName, sizeof(t_lastAttempt) - 1);
+        t_lastAttempt[sizeof(t_lastAttempt) - 1] = 0;
+        t_lastOk = ok;
+    }
     strncpy(t_currentDeskName, inputName, sizeof(t_currentDeskName) - 1);
     t_currentDeskName[sizeof(t_currentDeskName) - 1] = 0;
-    inputLog("switch_desk: transition '%s' → '%s' (SetThreadDesktop ok=%d err=%lu)",
-        threadName, inputName, ok, setErr);
 }
 
 // force_switch_active_desktop: bypasses the 500ms cache and re-attaches the

@@ -12,7 +12,9 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -102,6 +104,7 @@ func newProxy(cfg *Config, cfgDir string, port int) *Proxy {
 	mux.HandleFunc("/local/config", p.handleConfig)
 	mux.HandleFunc("/local/logout", p.handleLogout)
 	mux.HandleFunc("/local/favorites", p.handleFavorites)
+	mux.HandleFunc("/local/open-url", p.handleOpenURL)
 	mux.HandleFunc("/sso/callback", p.handleSsoCallback)
 	p.mux = mux
 	return p
@@ -187,6 +190,49 @@ func (p *Proxy) handleFavorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(data)
+}
+
+// handleOpenURL opens the given URL in the system default browser.
+// Only URLs matching the currently-configured server origin are accepted,
+// so a compromised page can't turn the proxy into a generic URL-opener.
+func (p *Proxy) handleOpenURL(w http.ResponseWriter, r *http.Request) {
+	raw := r.URL.Query().Get("url")
+	if raw == "" {
+		http.Error(w, `{"error":"url required"}`, http.StatusBadRequest)
+		return
+	}
+	// Scope: must be an absolute URL whose origin matches the configured server.
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		http.Error(w, `{"error":"invalid url"}`, http.StatusBadRequest)
+		return
+	}
+	if p.cfg.ServerURL == "" {
+		http.Error(w, `{"error":"no server configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	srv, err := url.Parse(p.cfg.ServerURL)
+	if err != nil || parsed.Host != srv.Host {
+		http.Error(w, `{"error":"url outside configured server"}`, http.StatusForbidden)
+		return
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", raw)
+	case "darwin":
+		cmd = exec.Command("open", raw)
+	default:
+		cmd = exec.Command("xdg-open", raw)
+	}
+	if err := cmd.Start(); err != nil {
+		log.Printf("open-url: %v", err)
+		http.Error(w, `{"error":"launcher failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprint(w, `{"ok":true}`)
 }
 
 // handleSsoCallback handles the OAuth redirect from Obligate back to the local app.

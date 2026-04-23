@@ -490,6 +490,213 @@ static void capture_close(void) {
     g_height = 0;
 }
 static int capture_is_gdi(void) { return g_use_gdi; }
+
+// ── Native capture thread ────────────────────────────────────────────────────
+//
+// Historically capture_frame ran on the Go goroutine that called captureFrame
+// via CGo. That goroutine's OS thread is polluted with COM apartments, D3D11
+// device notification windows, Go scheduler signal state and the watermark /
+// toast HWNDs — any one of which makes SetThreadDesktop(Winlogon) return
+// ERROR_BUSY (170). Without the desktop switch, DuplicateOutput returns
+// E_ACCESSDENIED from a non-visible desktop, so DXGI stays dead while the
+// Secure Desktop (UAC prompt, CAD security menu) is up — exactly the bug
+// reported in 1.0.182.
+//
+// RustDesk solves this by keeping capture in a dedicated std::thread in their
+// --server process; those threads don't own any of that state. We replicate
+// that by spawning a real native Win32 thread via CreateThread. The Go side
+// becomes a consumer that reads the latest frame from a mutex-protected
+// shared buffer.
+
+static volatile LONG   g_cap_running     = 0;  // 0=stopped, 1=run requested
+static volatile LONG   g_cap_restart     = 0;  // request re-init (monitor change)
+static volatile int    g_cap_want_mon    = 0;  // monitor index for restart
+static volatile int    g_cap_init_done   = 0;  // init complete (ok or fail)
+static volatile int    g_cap_init_ok     = 0;  // last init succeeded
+static HANDLE          g_cap_thread_h    = NULL;
+static CRITICAL_SECTION g_cap_frame_cs;
+static int             g_cap_cs_ready    = 0;
+static HANDLE          g_cap_frame_evt   = NULL;
+static unsigned char  *g_cap_shared      = NULL;
+static int             g_cap_shared_w    = 0;
+static int             g_cap_shared_h    = 0;
+static int             g_cap_shared_ox   = 0;
+static int             g_cap_shared_oy   = 0;
+static volatile LONG   g_cap_frame_seq   = 0;
+static volatile LONG   g_cap_last_read   = 0;
+
+// Helper: try to attach this thread to whichever desktop is currently
+// receiving input. Called from capture_thread_proc on DXGI_ERROR_ACCESS_LOST
+// so the duplication can be recreated on the Secure Desktop / Winlogon
+// during CAD / UAC transitions. Must be called from the native capture
+// thread — THAT thread has no windows so SetThreadDesktop succeeds (unlike
+// Go runtime threads where it fails with ERROR_BUSY 170).
+static void cap_thread_follow_input_desktop(void) {
+    HDESK d = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    DWORD openErr = d ? 0 : GetLastError();
+    if (!d) {
+        d = OpenInputDesktop(0, FALSE,
+            DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
+            DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU | DESKTOP_HOOKCONTROL |
+            DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK | DESKTOP_ENUMERATE);
+    }
+    if (!d) return;
+    BOOL ok = SetThreadDesktop(d);
+    (void)openErr; (void)ok;
+    // Leak the old HDESK deliberately — CloseDesktop on the current thread's
+    // desktop is unsafe and the leak is bounded by desktop transitions (rare).
+}
+
+// Resize the shared buffer to match current capture dimensions. Called on
+// init and after monitor switch.
+static void cap_resize_shared_locked(void) {
+    int need = g_width * g_height * 4;
+    if (need <= 0) return;
+    if (g_cap_shared_w == g_width && g_cap_shared_h == g_height && g_cap_shared) return;
+    unsigned char *nb = (unsigned char*)malloc(need);
+    if (!nb) return;
+    memset(nb, 0, need);
+    if (g_cap_shared) free(g_cap_shared);
+    g_cap_shared    = nb;
+    g_cap_shared_w  = g_width;
+    g_cap_shared_h  = g_height;
+    g_cap_shared_ox = g_mon_x;
+    g_cap_shared_oy = g_mon_y;
+}
+
+static DWORD WINAPI capture_thread_proc(LPVOID arg) {
+    (void)arg;
+    while (InterlockedCompareExchange(&g_cap_running, 1, 1) == 1) {
+        if (InterlockedCompareExchange(&g_cap_restart, 0, 1) == 1) {
+            capture_close();
+            int rc = capture_init_monitor(g_cap_want_mon);
+            if (rc < 0) {
+                g_cap_init_ok = 0;
+            } else {
+                EnterCriticalSection(&g_cap_frame_cs);
+                cap_resize_shared_locked();
+                LeaveCriticalSection(&g_cap_frame_cs);
+                g_cap_init_ok = 1;
+            }
+            g_cap_init_done = 1;
+            continue;
+        }
+
+        if (!g_cap_init_ok) { Sleep(20); continue; }
+
+        // Capture directly into the shared buffer under the frame lock.
+        // capture_frame does an internal memcpy row-by-row so holding the
+        // lock for the whole call is simpler than a double-buffer scheme and
+        // still keeps fetch_latest_frame waiters unblocked (~10-30ms).
+        EnterCriticalSection(&g_cap_frame_cs);
+        int ret = (g_cap_shared != NULL) ? capture_frame(g_cap_shared) : -1;
+        LeaveCriticalSection(&g_cap_frame_cs);
+
+        if (ret == 1) { continue; }   // DXGI_ERROR_WAIT_TIMEOUT, no new frame
+        if (ret < 0) {
+            // DXGI_ERROR_ACCESS_LOST — input desktop transitioned (UAC,
+            // Secure Desktop / CAD menu, workstation lock). Follow the
+            // new input desktop, re-init DXGI there, continue capturing.
+            // This thread has no windows so SetThreadDesktop actually works.
+            capture_close();
+            cap_thread_follow_input_desktop();
+            int rc = capture_reinit_current();
+            if (rc < 0) {
+                // Can't re-init right now (no rights, or adapter busy).
+                // Brief back-off; next tick will retry.
+                Sleep(250);
+                continue;
+            }
+            EnterCriticalSection(&g_cap_frame_cs);
+            cap_resize_shared_locked();
+            LeaveCriticalSection(&g_cap_frame_cs);
+            continue;
+        }
+
+        InterlockedIncrement(&g_cap_frame_seq);
+        SetEvent(g_cap_frame_evt);
+    }
+    return 0;
+}
+
+// Start the native capture thread. Blocks up to ~5s for the initial DXGI
+// init to complete so captureInit() semantics match the prior synchronous
+// path. Returns 0 on success.
+static int cap_start(int monitor_idx) {
+    if (g_cap_thread_h) return 0;
+    if (!g_cap_cs_ready) {
+        InitializeCriticalSection(&g_cap_frame_cs);
+        g_cap_cs_ready = 1;
+    }
+    if (!g_cap_frame_evt) {
+        g_cap_frame_evt = CreateEvent(NULL, FALSE, FALSE, NULL);
+    }
+    g_cap_want_mon  = monitor_idx;
+    g_cap_restart   = 1;
+    g_cap_init_done = 0;
+    g_cap_init_ok   = 0;
+    InterlockedExchange(&g_cap_running, 1);
+    g_cap_thread_h = CreateThread(NULL, 0, capture_thread_proc, NULL, 0, NULL);
+    if (!g_cap_thread_h) { InterlockedExchange(&g_cap_running, 0); return -1; }
+    for (int i = 0; i < 500 && !g_cap_init_done; i++) Sleep(10);
+    return g_cap_init_ok ? 0 : -2;
+}
+
+static int cap_request_monitor(int monitor_idx) {
+    g_cap_want_mon  = monitor_idx;
+    g_cap_init_done = 0;
+    InterlockedExchange(&g_cap_restart, 1);
+    for (int i = 0; i < 500 && !g_cap_init_done; i++) Sleep(10);
+    return g_cap_init_ok ? 0 : -2;
+}
+
+static void cap_stop(void) {
+    InterlockedExchange(&g_cap_running, 0);
+    if (g_cap_thread_h) {
+        WaitForSingleObject(g_cap_thread_h, 2000);
+        CloseHandle(g_cap_thread_h);
+        g_cap_thread_h = NULL;
+    }
+    capture_close();
+    if (g_cap_cs_ready) {
+        EnterCriticalSection(&g_cap_frame_cs);
+        if (g_cap_shared) { free(g_cap_shared); g_cap_shared = NULL; }
+        g_cap_shared_w = g_cap_shared_h = 0;
+        LeaveCriticalSection(&g_cap_frame_cs);
+    }
+    if (g_cap_frame_evt) { CloseHandle(g_cap_frame_evt); g_cap_frame_evt = NULL; }
+}
+
+// Read the latest frame from the shared buffer. Returns:
+//   0 = new frame copied into out_bgra
+//   1 = no new frame since last call (should also try again)
+//  <0 = error / not initialised
+static int cap_fetch(unsigned char *out_bgra, int out_size, int *out_w, int *out_h) {
+    // Short wait for a frame if none has arrived since last call.
+    WaitForSingleObject(g_cap_frame_evt, 50);
+    LONG cur = InterlockedCompareExchange(&g_cap_frame_seq, 0, 0);
+    if (cur == g_cap_last_read) return 1;
+    EnterCriticalSection(&g_cap_frame_cs);
+    int need = g_cap_shared_w * g_cap_shared_h * 4;
+    if (!g_cap_shared || out_size < need) {
+        LeaveCriticalSection(&g_cap_frame_cs);
+        return -1;
+    }
+    memcpy(out_bgra, g_cap_shared, need);
+    *out_w = g_cap_shared_w;
+    *out_h = g_cap_shared_h;
+    g_cap_last_read = cur;
+    LeaveCriticalSection(&g_cap_frame_cs);
+    return 0;
+}
+
+static void cap_get_shared_dims(int *w, int *h, int *ox, int *oy) {
+    if (!g_cap_cs_ready) { *w=0; *h=0; *ox=0; *oy=0; return; }
+    EnterCriticalSection(&g_cap_frame_cs);
+    *w = g_cap_shared_w; *h = g_cap_shared_h;
+    *ox = g_cap_shared_ox; *oy = g_cap_shared_oy;
+    LeaveCriticalSection(&g_cap_frame_cs);
+}
 */
 import "C"
 import (
@@ -527,17 +734,25 @@ func enumerateMonitors() []MonitorInfo {
 }
 
 func captureInitMonitor(idx int) error {
-	ret := int(C.capture_init_monitor(C.int(idx)))
-	if ret < 0 {
-		return fmt.Errorf("capture init monitor %d failed (code %d)", idx, ret)
+	// Delegate to the native capture thread. When it's already running, this
+	// just changes the target monitor and waits for re-init. The Go caller
+	// must not init DXGI from this thread — see the big comment in the C
+	// block above capture_thread_proc for why (ERROR_BUSY on SetThreadDesktop
+	// from Go threads breaks Secure Desktop capture otherwise).
+	if int(C.cap_start(C.int(idx))) == 0 {
+		captureActive = true
+		if C.capture_is_gdi() != 0 {
+			log.Printf("capture: monitor %d via GDI (native thread)", idx)
+		} else {
+			log.Printf("capture: monitor %d via DXGI (native thread)", idx)
+		}
+		return nil
 	}
-	captureActive = true
-	if C.capture_is_gdi() != 0 {
-		log.Printf("capture: monitor %d via GDI", idx)
-	} else {
-		log.Printf("capture: monitor %d via DXGI", idx)
+	if int(C.cap_request_monitor(C.int(idx))) == 0 {
+		captureActive = true
+		return nil
 	}
-	return nil
+	return fmt.Errorf("capture init monitor %d failed", idx)
 }
 
 func captureMonitorOffset() (x, y int) {
@@ -567,12 +782,16 @@ func captureInit() error {
 		}
 	}
 
-	// Step 1: try DXGI on every enumerated output. On Hyper-V basic VMs the
-	// primary output does not support duplication (E_ACCESSDENIED); we
-	// iterate to find one that works.
-	ret := int(C.capture_init_best())
+	// Step 1: start the NATIVE capture thread and let it run
+	// capture_init_best() there. Must not run DXGI init on a Go-runtime
+	// thread: goroutine threads carry windows/hooks (watermark HWND, COM
+	// apartments, scheduler signal state) that make SetThreadDesktop(Winlogon)
+	// fail with ERROR_BUSY during CAD / UAC transitions. The native thread
+	// is clean so it can actually follow the Secure Desktop when the input
+	// desktop transitions.
+	startRC := int(C.cap_start(C.int(0)))
 	mons := enumerateMonitors()
-	if ret == 0 && C.capture_is_gdi() == 0 {
+	if startRC == 0 && C.capture_is_gdi() == 0 {
 		captureActive = true
 		picked := int(C.capture_get_target_monitor())
 		name := ""
@@ -581,21 +800,14 @@ func captureInit() error {
 				mons[picked].Name, mons[picked].Width, mons[picked].Height,
 				mons[picked].X, mons[picked].Y)
 		}
-		log.Printf("helper: capture path = DXGI Desktop Duplication (monitor %d of %d)%s",
+		log.Printf("helper: capture path = DXGI Desktop Duplication (monitor %d of %d, native thread)%s",
 			picked, len(mons), name)
 		return nil
 	}
 
-	// Step 2: DXGI failed everywhere OR we fell through to GDI. Before
-	// accepting GDI (which is blank on the Winlogon desktop), try the
-	// Windows Magnification API — it operates at the accessibility
-	// compositor level and bypasses the Secure-Desktop / no-user DXGI
-	// restrictions. This is the RustDesk mag.rs path.
-	if ret == 0 {
-		// capture_init_best fell through to GDI; close it first so Mag
-		// can own the screen resources cleanly.
-		C.capture_close()
-	}
+	// Step 2: DXGI failed to start (or fell through to GDI). Stop the native
+	// thread, try Magnification API fallback.
+	C.cap_stop()
 	// Magnification API fallback — covers edge cases where DXGI fails on
 	// every output (pathological driver state, some RDS configurations).
 	if err := magCaptureInit(); err == nil {
@@ -632,7 +844,7 @@ func captureClose() {
 		captureMagActive = false
 	}
 	if captureActive {
-		C.capture_close()
+		C.cap_stop()
 		captureActive = false
 	}
 }
@@ -641,8 +853,8 @@ func captureWidth() int {
 	if captureMagActive {
 		return magCaptureWidth()
 	}
-	var w, h C.int
-	C.capture_get_size(&w, &h)
+	var w, h, ox, oy C.int
+	C.cap_get_shared_dims(&w, &h, &ox, &oy)
 	return int(w)
 }
 
@@ -650,14 +862,16 @@ func captureHeight() int {
 	if captureMagActive {
 		return magCaptureHeight()
 	}
-	var w, h C.int
-	C.capture_get_size(&w, &h)
+	var w, h, ox, oy C.int
+	C.cap_get_shared_dims(&w, &h, &ox, &oy)
 	return int(h)
 }
 
 // captureFrame fills buf (must be width*height*4 bytes) with BGRA pixel data.
-// Returns actual (width, height) and any error.
-// err == nil and width>0 means a new frame was captured.
+// Reads the latest frame produced by the native capture thread (which owns
+// DXGI and can follow Secure Desktop transitions unlike Go-runtime threads).
+// Returns "no new frame" error when the thread hasn't produced a new frame
+// since the last call — caller should skip encoding that tick.
 func captureFrame(buf []byte) (width, height int, err error) {
 	if captureMagActive {
 		width = magCaptureWidth()
@@ -673,31 +887,14 @@ func captureFrame(buf []byte) (width, height int, err error) {
 	}
 
 	var w, h C.int
-	C.capture_get_size(&w, &h)
+	ret := int(C.cap_fetch((*C.uchar)(unsafe.Pointer(&buf[0])), C.int(len(buf)), &w, &h))
 	width = int(w)
 	height = int(h)
-
-	expected := width * height * 4
-	if len(buf) < expected {
-		return 0, 0, fmt.Errorf("captureFrame: buffer too small (%d < %d)", len(buf), expected)
-	}
-
-	ret := int(C.capture_frame((*C.uchar)(unsafe.Pointer(&buf[0]))))
 	if ret == 1 {
-		// DXGI timeout — no new frame since last call
 		return width, height, fmt.Errorf("no new frame")
 	}
 	if ret < 0 {
-		// DXGI_ERROR_ACCESS_LOST happens when the input desktop changes
-		// (UAC Secure Desktop, workstation lock, login screen). Re-attach
-		// this thread to the active desktop before recreating DXGI so the
-		// duplication targets the currently visible desktop.
-		C.capture_close()
-		inputSwitchActiveDesktop()
-		if rc := int(C.capture_reinit_current()); rc < 0 {
-			return 0, 0, fmt.Errorf("capture reinit failed (code %d)", rc)
-		}
-		return width, height, fmt.Errorf("no new frame")
+		return 0, 0, fmt.Errorf("cap_fetch failed (code %d)", ret)
 	}
 	return width, height, nil
 }
