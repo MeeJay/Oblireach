@@ -149,50 +149,77 @@ static HDESK g_currentDesk = NULL;
 
 static void switch_to_active_desktop(void) {
     DWORD now = GetTickCount();
-    if (now - t_deskCheckTime < 500 && t_currentDeskName[0] != 0) return;
+    if (now - t_deskCheckTime < 500) return;
     t_deskCheckTime = now;
 
-    // Try to open the input desktop (the one receiving user input right now).
-    // Use DESKTOP_SWITCHDESKTOP for the access check — GENERIC_ALL can fail
-    // on the Secure Desktop (UAC prompt / Winlogon).
-    HDESK inputDesk = OpenInputDesktop(0, FALSE,
-        DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
-        DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU);
-    DWORD openErr = inputDesk ? 0 : GetLastError();
-    if (!inputDesk) {
-        // Fallback: try with minimal rights (enough for SetThreadDesktop + SendInput)
-        inputDesk = OpenInputDesktop(0, FALSE, DESKTOP_SWITCHDESKTOP);
+    // Query what the THREAD is currently attached to. The helper process was
+    // spawned with CreateProcess(lpDesktop=...) which gives this thread an
+    // inherited HDESK with FULL access rights (whatever the token allows).
+    // We must NOT blindly SetThreadDesktop to a freshly-opened handle from
+    // OpenInputDesktop — that handle only has the rights we asked for in
+    // the mask, and SendInput then returns ERROR_ACCESS_DENIED on the
+    // otherwise-same desktop. This regression broke ALL input in 1.0.180
+    // after the dispatch goroutine (a fresh thread without Go-runtime
+    // windows that made SetThreadDesktop silently fail) started "succeeding"
+    // at the switch — landing on a limited handle.
+    HDESK threadDesk = GetThreadDesktop(GetCurrentThreadId());
+    char threadName[128] = {0};
+    DWORD needed = 0;
+    if (threadDesk) {
+        GetUserObjectInformationA(threadDesk, UOI_NAME, threadName, sizeof(threadName), &needed);
     }
+
+    // What desktop is currently receiving user input?
+    HDESK inputDesk = OpenInputDesktop(0, FALSE, DESKTOP_SWITCHDESKTOP);
     if (!inputDesk) {
-        inputLog("switch_desk: OpenInputDesktop failed fullAccess_err=%lu minAccess_err=%lu",
-            openErr, GetLastError());
+        inputLog("switch_desk: OpenInputDesktop failed err=%lu", GetLastError());
         return;
     }
+    char inputName[128] = {0};
+    GetUserObjectInformationA(inputDesk, UOI_NAME, inputName, sizeof(inputName), &needed);
 
-    char name[128] = {0};
-    DWORD needed = 0;
-    GetUserObjectInformationA(inputDesk, UOI_NAME, name, sizeof(name), &needed);
-
-    // If the desktop name hasn't changed since the last attach, bail out —
-    // SetThreadDesktop would just fail with ERROR_BUSY anyway, and SendInput
-    // already targets the thread's current desktop.
-    if (strncmp(name, t_currentDeskName, sizeof(t_currentDeskName)) == 0) {
+    // Already on the right desktop → no-op. Preserving the inherited handle
+    // preserves its rights (essential for SendInput). Only switch when the
+    // input desktop has actually transitioned (UAC prompt, screen lock,
+    // Winlogon/Default flip).
+    if (strcmp(inputName, threadName) == 0) {
+        if (t_currentDeskName[0] == 0) {
+            strncpy(t_currentDeskName, threadName, sizeof(t_currentDeskName) - 1);
+            t_currentDeskName[sizeof(t_currentDeskName) - 1] = 0;
+            inputLog("switch_desk: already on '%s' (no switch needed, inherited rights preserved)", threadName);
+        }
         CloseDesktop(inputDesk);
         return;
     }
 
-    // Desktop actually changed (e.g. Default ↔ Winlogon on CAD, UAC prompt,
-    // or lock transition). Attempt the per-thread attach and record the
-    // new name even if SetThreadDesktop fails — we've at least observed it.
+    // Desktops differ. Reopen the target with broad rights so SendInput works
+    // post-attach. GENERIC_ALL first; fall back to the union of desktop-
+    // specific rights that SendInput documentation implies are required
+    // (HOOKCONTROL + JOURNAL*).
+    CloseDesktop(inputDesk);
+    inputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    DWORD openErrGeneric = inputDesk ? 0 : GetLastError();
+    if (!inputDesk) {
+        inputDesk = OpenInputDesktop(0, FALSE,
+            DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP |
+            DESKTOP_CREATEWINDOW | DESKTOP_CREATEMENU | DESKTOP_HOOKCONTROL |
+            DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK | DESKTOP_ENUMERATE);
+    }
+    if (!inputDesk) {
+        inputLog("switch_desk: reopen broad rights failed generic=%lu narrow=%lu",
+            openErrGeneric, GetLastError());
+        return;
+    }
+
     BOOL ok = SetThreadDesktop(inputDesk);
     DWORD setErr = ok ? 0 : GetLastError();
     if (t_currentDesk) CloseDesktop(t_currentDesk);
     t_currentDesk = inputDesk;
-    g_currentDesk = inputDesk; // mirror for diagnostics
-    strncpy(t_currentDeskName, name, sizeof(t_currentDeskName) - 1);
+    g_currentDesk = inputDesk;
+    strncpy(t_currentDeskName, inputName, sizeof(t_currentDeskName) - 1);
     t_currentDeskName[sizeof(t_currentDeskName) - 1] = 0;
-    inputLog("switch_desk: attached to '%s' (SetThreadDesktop ok=%d err=%lu)",
-        name, ok, setErr);
+    inputLog("switch_desk: transition '%s' → '%s' (SetThreadDesktop ok=%d err=%lu)",
+        threadName, inputName, ok, setErr);
 }
 
 // force_switch_active_desktop: bypasses the 500ms cache and re-attaches the

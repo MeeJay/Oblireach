@@ -396,6 +396,18 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
       <label>Server URL</label>
       <input id="inp-server" type="url" placeholder="https://obliance.example.com" value="%s"/>
     </div>
+    <div id="sso-login-fields">
+      <div class="err-msg" id="sso-err"></div>
+      <button class="btn-primary" id="btn-sso" style="background:#534AB7;width:100%%">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        Sign in with Obligate SSO
+      </button>
+    </div>
+    <div id="or-sep" style="display:flex;align-items:center;gap:10px;color:var(--muted2);font-size:10px;text-transform:uppercase;letter-spacing:2px;font-weight:600;margin:2px 0">
+      <span style="flex:1;height:1px;background:var(--border2)"></span>
+      <span>or local account</span>
+      <span style="flex:1;height:1px;background:var(--border2)"></span>
+    </div>
     <div id="local-login-fields">
       <div class="form-group">
         <label>Username</label>
@@ -411,11 +423,8 @@ body{background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display
       <div class="err-msg" id="login-err"></div>
       <button class="btn-primary" id="btn-login">Connect</button>
     </div>
-    <div id="sso-login-fields" style="display:none">
-      <div class="err-msg" id="sso-err"></div>
-      <button class="btn-primary" id="btn-sso" style="background:#534AB7;width:100%%">Sign in with SSO</button>
-      <button style="background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:10px;padding:7px;font-size:11px;cursor:pointer;margin-top:4px;width:100%%" id="btn-local-fallback">Use local login instead</button>
-    </div>
+    <!-- btn-local-fallback kept as hidden stub for backwards compat with removed listener -->
+    <span id="btn-local-fallback" style="display:none"></span>
   </div>
 </div>
 
@@ -686,10 +695,6 @@ function isH264Keyframe(data) {
 document.getElementById('btn-login').addEventListener('click', doLogin);
 document.getElementById('inp-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 document.getElementById('btn-sso').addEventListener('click', doSsoLogin);
-document.getElementById('btn-local-fallback').addEventListener('click', () => {
-  document.getElementById('sso-login-fields').style.display = 'none';
-  document.getElementById('local-login-fields').style.display = '';
-});
 
 let ssoCheckTimer = null;
 document.getElementById('inp-server').addEventListener('input', () => {
@@ -697,23 +702,30 @@ document.getElementById('inp-server').addEventListener('input', () => {
   ssoCheckTimer = setTimeout(checkSso, 500);
 });
 
+// Probes the server for Obligate SSO support and adjusts UI visibility.
+// The SSO button is shown by default (optimistic) so a user can always attempt
+// SSO even if detection fails. We only HIDE the SSO button if the server
+// explicitly returns obligateEnabled:false.
 async function checkSso() {
   const server = document.getElementById('inp-server').value.trim().replace(/\/$/, '');
   if (!server) return;
-  await fetch('/local/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverUrl: server }) });
+  try {
+    await fetch('/local/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ serverUrl: server }) });
+  } catch {}
+  const ssoEl = document.getElementById('sso-login-fields');
+  const sepEl = document.getElementById('or-sep');
   try {
     const r = await fetch('/proxy/api/auth/sso-config');
-    if (!r.ok) return;
+    if (!r.ok) return; // leave SSO button visible — user can still try
     const d = await r.json();
     const sso = d.data || d;
-    if (sso.obligateEnabled && sso.obligateReachable) {
-      document.getElementById('local-login-fields').style.display = 'none';
-      document.getElementById('sso-login-fields').style.display = '';
-    } else {
-      document.getElementById('local-login-fields').style.display = '';
-      document.getElementById('sso-login-fields').style.display = 'none';
-    }
-  } catch {}
+    const explicitlyDisabled = sso && sso.obligateEnabled === false;
+    const show = !explicitlyDisabled;
+    ssoEl.style.display = show ? '' : 'none';
+    sepEl.style.display = show ? 'flex' : 'none';
+  } catch {
+    // Network error reaching server — leave SSO button visible.
+  }
 }
 
 async function doSsoLogin() {
