@@ -151,7 +151,17 @@ func main() {
 	chatHelper      := flag.Bool("chat-helper", false, "Run as chat helper subprocess (internal use)")
 	chatID          := flag.String("chat-id", "", "Chat session ID (chat-helper mode)")
 	chatOperator    := flag.String("operator", "", "Operator display name (chat-helper mode)")
+	pillTest        := flag.Bool("pill-test", false, "Standalone LIVE/REC watermark preview (dev only — shows pill + toggles every 3s)")
 	flag.Parse()
+
+	// ── Pill preview mode (dev) ──────────────────────────────────────────────
+	// Runs just the watermark pump so you can eyeball the LIVE/REC capsule
+	// without rebuilding the MSI / deploying the agent. Toggles LIVE↔REC
+	// every 3 seconds. Ctrl+C to exit.
+	if *pillTest {
+		runPillPreview()
+		return
+	}
 
 	// ── Toast notification subprocess mode ───────────────────────────────────
 	// Launched by the service process inside a user session to show a toast.

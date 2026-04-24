@@ -1838,8 +1838,15 @@ async function startRemote(wtsSessionId) {
   if (!selectedDevice) return;
   // Add/activate session tab
   const tab = addSessionTab(selectedDevice);
+  // Remember the params so auto-reconnect can redial with the same target
+  // session after a Winlogon→user-session transition disconnects us.
+  tab.reconnectParams = { wtsSessionId, device: selectedDevice };
+  if (tab.reconnectAttempts === undefined) tab.reconnectAttempts = 0;
+  tab.userStopped = false;
   const statusEl = document.getElementById('remote-status');
-  if (statusEl) statusEl.textContent = 'Starting session...';
+  if (statusEl) statusEl.textContent = (tab.reconnectAttempts > 0)
+    ? ('Reconnecting (' + tab.reconnectAttempts + '/3)...')
+    : 'Starting session...';
   try {
     const body = { deviceId: selectedDevice.id, protocol: 'oblireach' };
     if (wtsSessionId !== undefined) body.sessionId = wtsSessionId;
@@ -1869,11 +1876,11 @@ async function startRemote(wtsSessionId) {
     if (stopBtn) stopBtn.style.display = '';
     ws.onopen = () => {
       if (statusEl) statusEl.textContent = 'Connected \u2014 waiting for stream...';
+      tab.reconnectAttempts = 0; // successful connect resets the retry count
       startPerfHudTimer();
       renderSessionTabs();
     };
     ws.onclose = () => {
-      if (statusEl) statusEl.textContent = 'Disconnected';
       if (stopBtn) stopBtn.style.display = 'none';
       const c = document.getElementById('remote-canvas'), p = document.getElementById('remote-placeholder');
       if (c) c.style.display = 'none'; if (p) p.style.display = 'flex';
@@ -1882,13 +1889,43 @@ async function startRemote(wtsSessionId) {
       stopPerfHudTimer();
       if (recMediaRecorder) toggleRecording();
       renderSessionTabs();
+
+      // Auto-reconnect on unexpected close — mimics TeamViewer/RustDesk
+      // behaviour after the Winlogon→user-session transition that happens
+      // when the operator logs the target in through the CAD screen.
+      // Max 3 attempts with 1.5s back-off; cleared on user-initiated stop
+      // or on the first successful new connection.
+      const maxAttempts = 3;
+      if (!tab.userStopped && tab.reconnectAttempts < maxAttempts) {
+        tab.reconnectAttempts++;
+        if (statusEl) statusEl.textContent = 'Reconnecting (' + tab.reconnectAttempts + '/' + maxAttempts + ')...';
+        setTimeout(() => {
+          if (tab.userStopped) return;
+          const saved = selectedDevice;
+          selectedDevice = tab.reconnectParams.device;
+          startRemote(tab.reconnectParams.wtsSessionId).finally(() => {
+            // Restore if user was viewing a different device meanwhile.
+            if (saved && saved.id !== tab.reconnectParams.device.id) {
+              selectedDevice = saved;
+            }
+          });
+        }, 1500);
+      } else {
+        if (statusEl) statusEl.textContent = 'Disconnected';
+        tab.reconnectAttempts = 0;
+      }
     };
     ws.onerror = () => { if (statusEl) statusEl.textContent = 'WebSocket error'; };
     ws.onmessage = handleRemoteMessage;
-  } catch (err) { if (statusEl) statusEl.textContent = 'Error: ' + err.message; }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Error: ' + err.message;
+  }
 }
 
 function stopRemote() {
+  // Mark the active tab as user-stopped so ws.onclose does NOT auto-reconnect.
+  const tab = sessionTabs.find(t => t.ws === remoteWs);
+  if (tab) { tab.userStopped = true; tab.reconnectAttempts = 0; }
   if (remoteWs) { remoteWs.close(); remoteWs = null; }
   if (remoteDecoder) { try { remoteDecoder.close(); } catch {} remoteDecoder = null; }
   stopPerfHudTimer();

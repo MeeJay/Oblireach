@@ -3,73 +3,25 @@
 package main
 
 /*
-#cgo LDFLAGS: -lgdi32 -luser32 -ldwmapi
+#cgo LDFLAGS: -lgdi32 -luser32
 
 #include <windows.h>
-#include <dwmapi.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define WM_PILL_W 92
-#define WM_PILL_H 30
+// Previous 1.0.188 attempt used SetWindowCompositionAttribute with
+// ACCENT_ENABLE_ACRYLICBLURBEHIND. On Server 2025 either the undocumented
+// API returned FALSE or the acrylic didn't compose because WS_EX_LAYERED +
+// SetWindowRgn don't cooperate with the DWM blur pipeline. User screenshot
+// showed: opaque dark pill, crenellated/aliased edges, wasted right
+// padding. Real frosted-glass would need UpdateLayeredWindow with per-
+// pixel alpha from a GDI+ rendered bitmap — bigger refactor, deferred.
+// This version gives a clean tight capsule with tuned colors.
+
+#define WM_PILL_W 58
+#define WM_PILL_H 24
+#define WM_PILL_RADIUS 12 // = height/2 ⇒ perfect capsule ends
 #define WM_USER_SET_MODE (WM_USER + 1)
-
-// ── Undocumented acrylic blur (SetWindowCompositionAttribute) ───────────────
-// Produces the frosted-glass effect used by the Windows 10+ Start menu and
-// notification center. ACCENT_ENABLE_ACRYLICBLURBEHIND requires Win10 1803+;
-// we probe via GetProcAddress and fall back to DwmEnableBlurBehindWindow
-// (Win7+ Aero blur — less frosted but still translucent).
-
-typedef enum _ACCENT_STATE {
-    ACCENT_DISABLED                  = 0,
-    ACCENT_ENABLE_GRADIENT           = 1,
-    ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
-    ACCENT_ENABLE_BLURBEHIND         = 3,
-    ACCENT_ENABLE_ACRYLICBLURBEHIND  = 4,
-} ACCENT_STATE;
-
-typedef struct _ACCENT_POLICY {
-    ACCENT_STATE AccentState;
-    DWORD AccentFlags;
-    DWORD GradientColor; // ABGR when used with acrylic
-    DWORD AnimationId;
-} ACCENT_POLICY;
-
-typedef enum _WINDOWCOMPOSITIONATTRIB {
-    WCA_ACCENT_POLICY = 19,
-} WINDOWCOMPOSITIONATTRIB;
-
-typedef struct _WINDOWCOMPOSITIONATTRIBDATA {
-    WINDOWCOMPOSITIONATTRIB Attribute;
-    PVOID  pvData;
-    SIZE_T cbData;
-} WINDOWCOMPOSITIONATTRIBDATA;
-
-typedef BOOL (WINAPI *pfnSetWindowCompositionAttribute)(HWND, WINDOWCOMPOSITIONATTRIBDATA*);
-
-static void apply_acrylic(HWND hwnd) {
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (!user32) return;
-    pfnSetWindowCompositionAttribute swca =
-        (pfnSetWindowCompositionAttribute)GetProcAddress(user32, "SetWindowCompositionAttribute");
-    if (swca) {
-        ACCENT_POLICY ap = {0};
-        ap.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND;
-        ap.AccentFlags = 2; // draw borders
-        // ABGR: tint ~ #0d1117 at ~45% opacity → 73,0d,11,17 reversed = 0x73170E0D
-        ap.GradientColor = 0x73170E0D;
-        WINDOWCOMPOSITIONATTRIBDATA data = { WCA_ACCENT_POLICY, &ap, sizeof(ap) };
-        if (swca(hwnd, &data)) return;
-    }
-    // Fallback: Aero blur (Win7+).
-    DWM_BLURBEHIND bb = {0};
-    bb.dwFlags  = DWM_BB_ENABLE;
-    bb.fEnable  = TRUE;
-    bb.hRgnBlur = NULL;
-    DwmEnableBlurBehindWindow(hwnd, &bb);
-}
-
-#define WM_PILL_RADIUS 15 // height/2 — perfect capsule ends
 
 static HWND g_watermark = NULL;
 static HFONT g_wm_font = NULL;
@@ -85,12 +37,14 @@ static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
 
-        // Background: thin capsule. The acrylic blur (applied once at window
-        // creation via apply_acrylic) provides the frosted-glass look; we
-        // still need a GDI fill to define the capsule shape, but keep it
-        // subtle — a near-charcoal with low chroma so the blur dominates.
+        // Capsule fill + 1px border. NeonUI chat-aligned palette:
+        //   fill    = #161b22 (chat "elevated surface" bg, input bar, header)
+        //   border  = ~ rgba(255,255,255,0.08) over #161b22 = #252c35
+        // Combined with WS_EX_LAYERED LWA_ALPHA below, the whole pill shows
+        // at ~75% opacity for a see-through feel matching the chat's
+        // rgba-on-dark aesthetic.
         HBRUSH bgBr = CreateSolidBrush(RGB(22, 27, 34));
-        HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(48, 54, 61));
+        HPEN bgPen = CreatePen(PS_SOLID, 1, RGB(37, 44, 53));
         HBRUSH oldBr = (HBRUSH)SelectObject(hdc, bgBr);
         HPEN   oldPen = (HPEN)SelectObject(hdc, bgPen);
         RoundRect(hdc, 0, 0, WM_PILL_W, WM_PILL_H, WM_PILL_RADIUS*2, WM_PILL_RADIUS*2);
@@ -99,25 +53,32 @@ static LRESULT CALLBACK wmWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DeleteObject(bgBr);
         DeleteObject(bgPen);
 
-        // Dot color: red for REC, green for LIVE
-        COLORREF dotColor = g_wm_recording ? RGB(239, 68, 68) : RGB(74, 222, 128);
-        HBRUSH dotBr = CreateSolidBrush(dotColor);
-        HPEN dotPen = CreatePen(PS_SOLID, 1, dotColor);
+        // Accent dot — green #22c55e for LIVE (chat "allow" button), red
+        // #c2001b for REC (Oblireach accent, same as chat operator avatar).
+        COLORREF accent = g_wm_recording ? RGB(194, 0, 27) : RGB(34, 197, 94);
+        HBRUSH dotBr = CreateSolidBrush(accent);
+        HPEN dotPen = CreatePen(PS_SOLID, 1, accent);
         SelectObject(hdc, dotBr);
         SelectObject(hdc, dotPen);
-        Ellipse(hdc, 10, 8, 22, 20);
+        // 6×6 dot, vertically centered at y=(H-6)/2 = 9, x=9 (from left edge).
+        Ellipse(hdc, 9, 9, 15, 15);
         DeleteObject(dotBr);
         DeleteObject(dotPen);
 
-        // Text
+        // Text — body fg #e6edf3 (chat body text), slightly brighter than
+        // the accent so it's readable without echoing the dot colour twice.
         SetBkMode(hdc, TRANSPARENT);
         if (!g_wm_font)
-            g_wm_font = CreateFontW(-12, 0, 0, 0, FW_BOLD, 0, 0, 0,
+            g_wm_font = CreateFontW(-11, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0,
                 DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SelectObject(hdc, g_wm_font);
-        SetTextColor(hdc, dotColor);
-        RECT rc = {26, 5, WM_PILL_W - 4, WM_PILL_H - 4};
-        DrawTextW(hdc, g_wm_recording ? L"REC" : L"LIVE", -1, &rc, DT_LEFT | DT_SINGLELINE);
+        SetTextColor(hdc, RGB(230, 237, 243));
+        // Text region starts after the dot+gap. DT_CENTER in that region
+        // keeps "LIVE" / "REC" balanced — avoids the big right gap that the
+        // previous DT_LEFT version produced.
+        RECT rc = {18, 3, WM_PILL_W - 4, WM_PILL_H - 3};
+        DrawTextW(hdc, g_wm_recording ? L"REC" : L"LIVE", -1, &rc,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -153,15 +114,16 @@ static void show_watermark_rec(void) {
         NULL, NULL, wc.hInstance, NULL);
 
     if (g_watermark) {
-        // Physically shape the window as a capsule via SetWindowRgn. Pixels
-        // outside the region are fully absent (not just alpha-blended).
-        // This is cleaner than an LWA_COLORKEY hack and plays nicely with
-        // SetWindowCompositionAttribute's acrylic blur below.
+        // Physically shape the window as a capsule via SetWindowRgn — pixels
+        // outside the region don't exist (no alpha artefacts on the corners).
         HRGN rgn = CreateRoundRectRgn(0, 0, WM_PILL_W + 1, WM_PILL_H + 1,
             WM_PILL_RADIUS * 2, WM_PILL_RADIUS * 2);
         SetWindowRgn(g_watermark, rgn, TRUE);
-        SetLayeredWindowAttributes(g_watermark, 0, 230, LWA_ALPHA);
-        apply_acrylic(g_watermark);
+        // Uniform ~73% opacity so the pill is clearly present but the
+        // background content bleeds through — as close to "transparent" as
+        // GDI without per-pixel alpha gets. Full acrylic would need
+        // UpdateLayeredWindow + a GDI+ rendered premultiplied-alpha bitmap.
+        SetLayeredWindowAttributes(g_watermark, 0, 185, LWA_ALPHA);
     }
 }
 
