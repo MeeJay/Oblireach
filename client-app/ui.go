@@ -1834,6 +1834,48 @@ function renderRemoteTab(tc) {
   });
 }
 
+// Max auto-reconnect attempts after an unexpected disconnect. The login
+// transition on a console session (Winlogon → user desktop) tears down the
+// tunnel; TeamViewer/RustDesk reconnect automatically on the now-user
+// session, so we do the same.
+const REMOTE_RECONNECT_MAX_ATTEMPTS = 5;
+const REMOTE_RECONNECT_DELAY_MS = 2000;
+
+// scheduleRemoteReconnect arms a retry of startRemote for the given tab.
+// Returns true if a retry was scheduled, false if we gave up (userStopped
+// or max attempts reached). Shared by BOTH the ws.onclose path (normal
+// disconnect mid-session) AND the catch path in startRemote (when the
+// POST /api/remote/sessions call or the WS handshake itself fails — which
+// is exactly what happens during the Winlogon→user-session transition,
+// because the server briefly sees the device in an inconsistent state).
+function scheduleRemoteReconnect(tab) {
+  if (!tab || tab.userStopped) return false;
+  if (tab.reconnectAttempts >= REMOTE_RECONNECT_MAX_ATTEMPTS) {
+    tab.reconnectAttempts = 0;
+    return false;
+  }
+  tab.reconnectAttempts++;
+  const attempt = tab.reconnectAttempts;
+  const statusEl = document.getElementById('remote-status');
+  if (statusEl) statusEl.textContent =
+    'Reconnecting (' + attempt + '/' + REMOTE_RECONNECT_MAX_ATTEMPTS + ')...';
+  console.log('[reconnect] scheduling attempt ' + attempt + '/' +
+    REMOTE_RECONNECT_MAX_ATTEMPTS + ' for tab ' + tab.id + ' in ' +
+    REMOTE_RECONNECT_DELAY_MS + 'ms');
+  setTimeout(() => {
+    if (tab.userStopped) { console.log('[reconnect] cancelled — user stopped'); return; }
+    const saved = selectedDevice;
+    selectedDevice = tab.reconnectParams.device;
+    startRemote(tab.reconnectParams.wtsSessionId).finally(() => {
+      // Restore if user was viewing a different device meanwhile.
+      if (saved && saved.id !== tab.reconnectParams.device.id) {
+        selectedDevice = saved;
+      }
+    });
+  }, REMOTE_RECONNECT_DELAY_MS);
+  return true;
+}
+
 async function startRemote(wtsSessionId) {
   if (!selectedDevice) return;
   // Add/activate session tab
@@ -1845,7 +1887,7 @@ async function startRemote(wtsSessionId) {
   tab.userStopped = false;
   const statusEl = document.getElementById('remote-status');
   if (statusEl) statusEl.textContent = (tab.reconnectAttempts > 0)
-    ? ('Reconnecting (' + tab.reconnectAttempts + '/3)...')
+    ? ('Reconnecting (' + tab.reconnectAttempts + '/' + REMOTE_RECONNECT_MAX_ATTEMPTS + ')...')
     : 'Starting session...';
   try {
     const body = { deviceId: selectedDevice.id, protocol: 'oblireach' };
@@ -1856,12 +1898,15 @@ async function startRemote(wtsSessionId) {
     // Non-2xx — surface the server's error message
     if (!r.ok) {
       if (r.status === 401 && d?.twoFactorRequired) {
+        // 2FA is a hard stop — user must enter the code. No point retrying.
+        tab.userStopped = true;
         throw new Error('2FA code required to start a remote session');
       }
       throw new Error(d?.error || ('HTTP ' + r.status));
     }
     // 202 — pending approval (restriction matrix)
     if (r.status === 202 || d?.data?.status === 'pending_approval') {
+      tab.userStopped = true;
       throw new Error('Remote session pending approval (check the Approvals page)');
     }
     const session = d?.data;
@@ -1880,7 +1925,11 @@ async function startRemote(wtsSessionId) {
       startPerfHudTimer();
       renderSessionTabs();
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      console.log('[reconnect] ws close for tab ' + tab.id +
+        ': code=' + (ev?.code ?? '?') + ', wasClean=' + (ev?.wasClean ?? '?') +
+        ', userStopped=' + tab.userStopped +
+        ', attempts=' + tab.reconnectAttempts);
       if (stopBtn) stopBtn.style.display = 'none';
       const c = document.getElementById('remote-canvas'), p = document.getElementById('remote-placeholder');
       if (c) c.style.display = 'none'; if (p) p.style.display = 'flex';
@@ -1889,36 +1938,22 @@ async function startRemote(wtsSessionId) {
       stopPerfHudTimer();
       if (recMediaRecorder) toggleRecording();
       renderSessionTabs();
-
-      // Auto-reconnect on unexpected close — mimics TeamViewer/RustDesk
-      // behaviour after the Winlogon→user-session transition that happens
-      // when the operator logs the target in through the CAD screen.
-      // Max 3 attempts with 1.5s back-off; cleared on user-initiated stop
-      // or on the first successful new connection.
-      const maxAttempts = 3;
-      if (!tab.userStopped && tab.reconnectAttempts < maxAttempts) {
-        tab.reconnectAttempts++;
-        if (statusEl) statusEl.textContent = 'Reconnecting (' + tab.reconnectAttempts + '/' + maxAttempts + ')...';
-        setTimeout(() => {
-          if (tab.userStopped) return;
-          const saved = selectedDevice;
-          selectedDevice = tab.reconnectParams.device;
-          startRemote(tab.reconnectParams.wtsSessionId).finally(() => {
-            // Restore if user was viewing a different device meanwhile.
-            if (saved && saved.id !== tab.reconnectParams.device.id) {
-              selectedDevice = saved;
-            }
-          });
-        }, 1500);
-      } else {
+      if (!scheduleRemoteReconnect(tab)) {
         if (statusEl) statusEl.textContent = 'Disconnected';
-        tab.reconnectAttempts = 0;
       }
     };
     ws.onerror = () => { if (statusEl) statusEl.textContent = 'WebSocket error'; };
     ws.onmessage = handleRemoteMessage;
   } catch (err) {
     if (statusEl) statusEl.textContent = 'Error: ' + err.message;
+    // POST /api/remote/sessions failed OR WS constructor threw. During a
+    // Winlogon→user-session transition the server briefly rejects the
+    // request; schedule a retry instead of stopping here. userStopped flag
+    // is set for hard errors (2FA, pending approval) above.
+    if (!tab.userStopped) {
+      console.log('[reconnect] POST/init threw, scheduling retry: ' + err.message);
+      scheduleRemoteReconnect(tab);
+    }
   }
 }
 
@@ -2465,32 +2500,75 @@ function renderInfoTab(tc) {
 }
 
 // ── Socket.io / Chat ─────────────────────────────────────────────────────────
+let socketState = 'idle';      // idle | loading | connecting | connected | error
+let socketLoadStarted = false;
+let pendingChatOpen = false;   // user clicked chat before socket ready — open as soon as possible
+
+function setChatHeaderStatus(text, color) {
+  const dot = document.getElementById('chat-status-dot');
+  const t = document.getElementById('chat-status-text');
+  if (t) t.textContent = text;
+  if (dot) dot.style.background = color;
+}
+
 function initSocketIO() {
-  // Dynamically load socket.io client from the server
+  if (socketLoadStarted) return;
+  socketLoadStarted = true;
+  socketState = 'loading';
+  // Load socket.io client from the server
   const s = document.createElement('script');
   s.src = '/proxy/socket.io/socket.io.js';
   s.onload = () => {
-    if (!window.io) return;
-    // Obliance server requires handshake.auth.{userId, tenantId} — see socket.ts.
-    // Session cookies alone are not sufficient; the socket.io middleware only
-    // reads the auth payload.
-    if (!currentOperatorId) {
-      console.warn('socket.io: no user id yet, chat will not work');
+    if (!window.io) {
+      socketState = 'error';
+      console.warn('socket.io: client loaded but window.io missing');
+      setChatHeaderStatus('Realtime unavailable', 'var(--danger)');
       return;
     }
+    if (!currentOperatorId) {
+      socketState = 'error';
+      console.warn('socket.io: no user id yet, chat cannot auth');
+      setChatHeaderStatus('No user id', 'var(--danger)');
+      return;
+    }
+    socketState = 'connecting';
+    setChatHeaderStatus('Connecting...', 'var(--warn)');
     chatSocket = io({
       path: '/proxy/socket.io',
       transports: ['polling', 'websocket'],
       auth: { userId: currentOperatorId, tenantId: currentTenantId },
+      reconnection: true,
     });
-    chatSocket.on('connect', () => { console.log('socket.io connected'); });
-    chatSocket.on('connect_error', (err) => { console.warn('socket.io connect_error:', err?.message || err); });
+    chatSocket.on('connect', () => {
+      socketState = 'connected';
+      console.log('socket.io connected');
+      setChatHeaderStatus('Ready', 'var(--success)');
+      if (pendingChatOpen && selectedDevice) {
+        pendingChatOpen = false;
+        openChatSession();
+      }
+    });
+    chatSocket.on('disconnect', (reason) => {
+      socketState = 'connecting';
+      console.warn('socket.io disconnected:', reason);
+      setChatHeaderStatus('Reconnecting...', 'var(--warn)');
+    });
+    chatSocket.on('connect_error', (err) => {
+      socketState = 'error';
+      const msg = err?.message || String(err);
+      console.warn('socket.io connect_error:', msg);
+      setChatHeaderStatus('Auth failed: ' + msg, 'var(--danger)');
+    });
     chatSocket.on('chat:message', onChatMessage);
     chatSocket.on('chat:closed', onChatClosed);
     chatSocket.on('chat:remote_response', onChatRemoteResponse);
     chatSocket.on('chat:typing', onChatTyping);
   };
-  s.onerror = () => { console.warn('socket.io client not available'); };
+  s.onerror = () => {
+    socketState = 'error';
+    console.warn('socket.io client script failed to load');
+    setChatHeaderStatus('Realtime unavailable', 'var(--danger)');
+  };
   document.head.appendChild(s);
 }
 
@@ -2507,8 +2585,16 @@ function toggleChat(forceOpen) {
 
   if (shouldOpen) {
     panel.classList.add('open');
-    if (!chatId && selectedDevice && chatSocket) openChatSession();
     document.getElementById('chat-badge').style.display = 'none';
+    if (chatId || !selectedDevice) return;
+    // Kick socket init if it hasn't started (can happen if enterApp races the user click)
+    if (!socketLoadStarted) initSocketIO();
+    if (chatSocket && chatSocket.connected) {
+      openChatSession();
+    } else {
+      pendingChatOpen = true;
+      setChatHeaderStatus(socketState === 'error' ? 'Realtime unavailable' : 'Waiting for realtime...', 'var(--warn)');
+    }
   } else {
     panel.classList.remove('open');
   }

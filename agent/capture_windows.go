@@ -582,10 +582,20 @@ static DWORD WINAPI capture_thread_proc(LPVOID arg) {
         if (g_cap_restart) {
             g_cap_restart = 0;
             capture_close();
-            // Use capture_init_best on init — it iterates every enumerated
-            // output and picks the first that supports DXGI duplication,
-            // matching the behaviour of the pre-1.0.184 captureInit path.
-            int rc = capture_init_best();
+            // g_cap_want_mon == -1 means "pick best available output" (initial
+            // startup behaviour matching pre-1.0.184 captureInit). Any value
+            // >=0 is an explicit monitor index requested by the operator via
+            // the monitor-switch UI — previously we ignored that and always
+            // called capture_init_best(), which on a multi-monitor target
+            // silently reverted to the primary output whenever the viewer
+            // picked a secondary. Matches the old capture_init_monitor() path
+            // for explicit switches.
+            int rc;
+            if (g_cap_want_mon < 0) {
+                rc = capture_init_best();
+            } else {
+                rc = capture_init_monitor(g_cap_want_mon);
+            }
             if (rc < 0) {
                 g_cap_init_ok = 0;
             } else {
@@ -753,11 +763,12 @@ func enumerateMonitors() []MonitorInfo {
 }
 
 func captureInitMonitor(idx int) error {
-	// Delegate to the native capture thread. When it's already running, this
-	// just changes the target monitor and waits for re-init. The Go caller
-	// must not init DXGI from this thread — see the big comment in the C
-	// block above capture_thread_proc for why (ERROR_BUSY on SetThreadDesktop
-	// from Go threads breaks Secure Desktop capture otherwise).
+	// Explicit monitor switch. If the native thread isn't running yet, start
+	// it targeting this specific monitor; otherwise tell the existing thread
+	// to reinit on the new monitor. Both paths funnel into the thread's
+	// restart handler which calls capture_init_monitor(idx) — never
+	// capture_init_best(), which would silently bounce back to the primary
+	// output whenever the operator picked a secondary.
 	if int(C.cap_start(C.int(idx))) == 0 {
 		captureActive = true
 		if C.capture_is_gdi() != 0 {
@@ -769,6 +780,7 @@ func captureInitMonitor(idx int) error {
 	}
 	if int(C.cap_request_monitor(C.int(idx))) == 0 {
 		captureActive = true
+		log.Printf("capture: switched to monitor %d (native thread reinit)", idx)
 		return nil
 	}
 	return fmt.Errorf("capture init monitor %d failed", idx)
@@ -801,14 +813,17 @@ func captureInit() error {
 		}
 	}
 
-	// Step 1: start the NATIVE capture thread and let it run
-	// capture_init_best() there. Must not run DXGI init on a Go-runtime
+	// Step 1: start the NATIVE capture thread in "best monitor" mode (-1
+	// sentinel → the thread calls capture_init_best() which iterates every
+	// DXGI output and picks the first that supports DuplicateOutput).
+	// Explicit index >=0 is reserved for operator-initiated monitor switches
+	// via captureInitMonitor(). Must not run DXGI init on a Go-runtime
 	// thread: goroutine threads carry windows/hooks (watermark HWND, COM
 	// apartments, scheduler signal state) that make SetThreadDesktop(Winlogon)
 	// fail with ERROR_BUSY during CAD / UAC transitions. The native thread
 	// is clean so it can actually follow the Secure Desktop when the input
 	// desktop transitions.
-	startRC := int(C.cap_start(C.int(0)))
+	startRC := int(C.cap_start(C.int(-1)))
 	mons := enumerateMonitors()
 	if startRC == 0 && C.capture_is_gdi() == 0 {
 		captureActive = true
